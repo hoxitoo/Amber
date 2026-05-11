@@ -1,0 +1,6 @@
+version: v1
+thresholds:
+  pump_prob_calibrated_min: 0.75
+  dump_prob_calibrated_min: 0.75
+  min_liquidity_score: 0.30
+  cooldown_sec: 300

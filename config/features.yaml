@@ -1,0 +1,11 @@
+version: v1
+features:
+  - name: ret_1m
+    source: mid_price
+    window: 1m
+  - name: vol_z_5m
+    source: volume
+    window: 5m
+  - name: realized_vol_5m
+    source: mid_price
+    window: 5m

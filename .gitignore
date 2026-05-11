@@ -1,0 +1,72 @@
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+build/
+dist/
+pip-wheel-metadata/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Coverage
+.coverage
+.coverage.*
+htmlcov/
+
+# Logs
+*.log
+logs/
+data/logs/
+*.jsonl.tmp
+
+# Runtime / state / local artifacts
+data/raw/
+data/features/
+data/datasets/
+data/models/
+data/state/
+tmp/
+artifacts/
+
+# Keep folder structure placeholders if needed
+!data/raw/.gitkeep
+!data/features/.gitkeep
+!data/datasets/.gitkeep
+!data/models/.gitkeep
+!data/state/.gitkeep
+!data/logs/.gitkeep
+
+# Secrets
+.env
+.env.*
+secrets/
+*.pem
+*.key
+
+# Jupyter / notebooks outputs
+*.ipynb
+
+# Mac/Linux misc
+*.tmp
+*.bak
