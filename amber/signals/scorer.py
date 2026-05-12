@@ -29,10 +29,10 @@ def score_signal(feature_row: dict[str, Any], models_root: Path, config_version:
     model = load_latest_model(models_root)
     calib = _load_latest_calibration(models_root)
 
-    ret_1m = float(feature_row.get("ret_1m", 0.0))
-    vol_mean = float(feature_row.get("vol_mean", 0.0))
+    ret_1 = float(feature_row.get("ret_1", 0.0))
+    vol_z_20 = float(feature_row.get("vol_z_20", 0.0))
 
-    up_raw = infer_raw_prob(model, ret_1m=ret_1m, vol_mean=vol_mean)
+    up_raw = infer_raw_prob(model, ret_1=ret_1, vol_z_20=vol_z_20)
     down_raw = max(0.0, min(1.0, 1.0 - up_raw))
     scale = float(calib.get("scale", 1.0))
 
@@ -41,8 +41,8 @@ def score_signal(feature_row: dict[str, Any], models_root: Path, config_version:
 
     explanation = SignalExplanation(
         top_feature_impacts=[
-            {"ret_1m": float(model["weights"]["ret_1m"]) * ret_1m},
-            {"vol_mean": float(model["weights"]["vol_mean"]) * vol_mean},
+            {"ret_1": float(model["weights"]["ret_1"]) * ret_1},
+            {"vol_z_20": float(model["weights"]["vol_z_20"]) * vol_z_20},
         ],
         rule_trace=[
             {"rule": "model_inference", "passed": True},

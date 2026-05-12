@@ -25,7 +25,7 @@ def calibrate_model(models_root: Path, datasets_root: Path) -> dict[str, Any]:
     latest_ds = sorted([p for p in datasets_root.iterdir() if p.is_dir() and p.name.startswith("dataset_")])[-1]
     rows = _read_jsonl(latest_ds / "dataset.jsonl")
 
-    raw = [infer_raw_prob(model, float(r.get("ret_1m", 0.0)), float(r.get("vol_mean", 0.0))) for r in rows]
+    raw = [infer_raw_prob(model, float(r.get("ret_1", 0.0)), float(r.get("vol_z_20", 0.0))) for r in rows]
     y = [int(r.get("up_hit", 0)) for r in rows]
 
     mean_raw = sum(raw) / len(raw)

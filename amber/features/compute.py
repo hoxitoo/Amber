@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from statistics import mean
 from typing import Any
+
+from amber.features.online import FeatureEngine
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -16,16 +17,6 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def _safe_ret(last_prices: list[float]) -> float:
-    if len(last_prices) < 2:
-        return 0.0
-    prev = last_prices[-2]
-    cur = last_prices[-1]
-    if prev == 0:
-        return 0.0
-    return (cur / prev) - 1.0
-
-
 def compute_batch_features(raw_root: Path, out_root: Path, symbols: list[str]) -> dict[str, int]:
     out_root.mkdir(parents=True, exist_ok=True)
     written = 0
@@ -36,19 +27,9 @@ def compute_batch_features(raw_root: Path, out_root: Path, symbols: list[str]) -
         if not rows:
             continue
 
-        last_series = [float(r["close"]) for r in rows]
-        volume_series = [float(r.get("volume_1m", 0.0)) for r in rows]
-
-        feature_row = {
-            "symbol": symbol,
-            "ts": rows[-1]["ts"],
-            "ret_1m": _safe_ret(last_series),
-            "mid_price": (float(rows[-1]["bid"]) + float(rows[-1]["ask"])) / 2.0,
-            "funding": float(rows[-1].get("funding", 0.0)),
-            "oi": float(rows[-1].get("oi", 0.0)),
-            "vol_mean": mean(volume_series),
-            "obs": len(rows),
-        }
+        engine = FeatureEngine()
+        feature_rows = engine.transform_rows(rows)
+        feature_row = feature_rows[-1]
 
         target = out_root / "features" / symbol
         target.mkdir(parents=True, exist_ok=True)

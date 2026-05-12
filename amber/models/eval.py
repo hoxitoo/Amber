@@ -20,7 +20,7 @@ def evaluate_model(models_root: Path, datasets_root: Path, threshold: float = 0.
     latest_ds = sorted([p for p in datasets_root.iterdir() if p.is_dir() and p.name.startswith("dataset_")])[-1]
     rows = _read_jsonl(latest_ds / "dataset.jsonl")
 
-    probs = [infer_raw_prob(model, float(r.get("ret_1m", 0.0)), float(r.get("vol_mean", 0.0))) for r in rows]
+    probs = [infer_raw_prob(model, float(r.get("ret_1", 0.0)), float(r.get("vol_z_20", 0.0))) for r in rows]
     y = [int(r.get("up_hit", 0)) for r in rows]
 
     preds = [1 if p >= threshold else 0 for p in probs]

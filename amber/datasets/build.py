@@ -51,8 +51,8 @@ def build_dataset(
                 {
                     "symbol": symbol,
                     "ts": rows[i]["ts"],
-                    "ret_1m": rows[i].get("ret_1m", 0.0),
-                    "vol_mean": rows[i].get("vol_mean", 0.0),
+                    "ret_1": rows[i].get("ret_1", 0.0),
+                    "vol_z_20": rows[i].get("vol_z_20", 0.0),
                     "obs": rows[i].get("obs", 0),
                     "up_hit": labels["up_hit"],
                     "down_hit": labels["down_hit"],

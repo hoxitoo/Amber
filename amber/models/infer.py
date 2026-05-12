@@ -18,7 +18,7 @@ def load_latest_model(models_root: Path) -> dict[str, Any]:
     return json.loads((latest / "model.json").read_text(encoding="utf-8"))
 
 
-def infer_raw_prob(model: dict[str, Any], ret_1m: float, vol_mean: float) -> float:
+def infer_raw_prob(model: dict[str, Any], ret_1: float, vol_z_20: float) -> float:
     w = model["weights"]
-    z = w["ret_1m"] * ret_1m + w["vol_mean"] * vol_mean + model["bias"]
+    z = w["ret_1"] * ret_1 + w["vol_z_20"] * vol_z_20 + model["bias"]
     return 1.0 / (1.0 + math.exp(-z))

@@ -1,11 +1,9 @@
-version: v1
+version: v2
 features:
-  - name: ret_1m
-    source: mid_price
-    window: 1m
-  - name: vol_z_5m
-    source: volume
-    window: 5m
-  - name: realized_vol_5m
-    source: mid_price
-    window: 5m
+  - name: ret_1
+  - name: ret_5
+  - name: ret_20
+  - name: vol_z_20
+  - name: oi_z_20
+  - name: funding_z_20
+  - name: mid_price
