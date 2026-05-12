@@ -6,6 +6,7 @@ from typing import Any
 
 from amber.common.manifest import ArtifactManifest, new_run_id, write_manifest
 from amber.models.infer import infer_raw_prob, load_latest_model
+from amber.models.registry import latest_registered
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -18,13 +19,15 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 def calibrate_model(models_root: Path, datasets_root: Path) -> dict[str, Any]:
     model = load_latest_model(models_root)
+    reg = latest_registered(models_root)
+    model_run_id = reg["model_run_id"] if reg else "unregistered"
+
     latest_ds = sorted([p for p in datasets_root.iterdir() if p.is_dir() and p.name.startswith("dataset_")])[-1]
     rows = _read_jsonl(latest_ds / "dataset.jsonl")
 
     raw = [infer_raw_prob(model, float(r.get("ret_1m", 0.0)), float(r.get("vol_mean", 0.0))) for r in rows]
     y = [int(r.get("up_hit", 0)) for r in rows]
 
-    # Simple calibration: map mean raw probability to observed rate by scalar factor.
     mean_raw = sum(raw) / len(raw)
     observed = sum(y) / len(y)
     scale = 1.0 if mean_raw == 0 else observed / mean_raw
@@ -32,7 +35,13 @@ def calibrate_model(models_root: Path, datasets_root: Path) -> dict[str, Any]:
     calib_run = new_run_id(prefix="calib")
     out_dir = models_root / calib_run
     out_dir.mkdir(parents=True, exist_ok=True)
-    payload = {"method": "scalar_mean_calibration", "scale": scale, "mean_raw": mean_raw, "observed": observed}
+    payload = {
+        "method": "scalar_mean_calibration",
+        "scale": scale,
+        "mean_raw": mean_raw,
+        "observed": observed,
+        "model_run_id": model_run_id,
+    }
     (out_dir / "calibration.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     manifest = ArtifactManifest(
@@ -42,7 +51,7 @@ def calibrate_model(models_root: Path, datasets_root: Path) -> dict[str, Any]:
         created_at=latest_ds.name,
         config_ref="config/amber.yaml",
         feature_spec_ref="config/features.yaml",
-        metadata={"dataset_run": latest_ds.name, "rows": len(rows), "model_type": model.get("model_type")},
+        metadata={"dataset_run": latest_ds.name, "rows": len(rows), "model_type": model.get("model_type"), "model_run_id": model_run_id},
     )
     write_manifest(out_dir / "manifest.json", manifest)
-    return {"run_id": calib_run, "scale": scale}
+    return {"run_id": calib_run, "scale": scale, "model_run_id": model_run_id}
