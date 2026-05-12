@@ -62,7 +62,7 @@ def score_signal(feature_row: dict[str, Any], models_root: Path, config_version:
         prob_up_calibrated=up_cal,
         prob_down_calibrated=down_cal,
         regime="unknown",
-        market_context={"obs": feature_row.get("obs", 0)},
+        market_context={"obs": feature_row.get("obs", 0), "mid_price": feature_row.get("mid_price", 0.0), "bid": feature_row.get("mid_price", 0.0), "ask": feature_row.get("mid_price", 0.0)},
         explanation=explanation,
         model_version=model.get("model_type", "unknown"),
         config_version=config_version,

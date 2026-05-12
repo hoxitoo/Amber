@@ -9,7 +9,7 @@ from amber.alerts.router import route_alert
 from amber.common.config import ConfigLoader
 from amber.common.logging import setup_logging
 from amber.common.types import SignalV1
-from amber.signals.filters import passes_thresholds
+from amber.signals.filters import SignalGate, passes_thresholds
 from amber.signals.scorer import score_signal
 
 logger = logging.getLogger(__name__)
@@ -42,6 +42,11 @@ def main() -> None:
     logs_root = Path(config["storage"]["logs_dir"])
     alert_channels = config.get("alerts", {}).get("channels", ["console"])
 
+    gate = SignalGate(
+        cooldown_sec=int(thresholds["thresholds"].get("cooldown_sec", 90)),
+        concurrent_limit=int(thresholds["thresholds"].get("concurrent_limit", 5)),
+    )
+
     feature_rows = _read_latest_feature_rows(features_root)
     emitted = 0
     for row in feature_rows:
@@ -50,7 +55,9 @@ def main() -> None:
             signal,
             up_min=float(thresholds["thresholds"]["pump_prob_calibrated_min"]),
             down_min=float(thresholds["thresholds"]["dump_prob_calibrated_min"]),
-        ):
+            directional_min=float(thresholds["thresholds"].get("directional_score_min", 0.2)),
+            spread_max_bps=float(thresholds["thresholds"].get("spread_bps_max", 30.0)),
+        ) and gate.allow(signal):
             _append_signal(logs_root, signal)
             route_alert(signal, channels=alert_channels)
             emitted += 1
