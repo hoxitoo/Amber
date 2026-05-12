@@ -1,0 +1,27 @@
+project:
+  name: amber
+  environment: local
+run:
+  timezone: UTC
+  log_level: INFO
+storage:
+  root: data
+  raw_dir: data/raw
+  features_dir: data/features
+  datasets_dir: data/datasets
+  models_dir: data/models
+  state_dir: data/state
+  logs_dir: data/logs
+exchange:
+  bybit:
+    testnet: false
+    ws_url: wss://stream.bybit.com/v5/public/linear
+    rest_url: https://api.bybit.com
+    symbols:
+    - BTCUSDT
+    - ETHUSDT
+signal:
+  schema_version: v1
+alerts:
+  channels:
+  - console
