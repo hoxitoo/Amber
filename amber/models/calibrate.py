@@ -31,6 +31,7 @@ def calibrate_model(models_root: Path, datasets_root: Path) -> dict[str, Any]:
     mean_raw = sum(raw) / len(raw)
     observed = sum(y) / len(y)
     scale = 1.0 if mean_raw == 0 else observed / mean_raw
+    scale = max(0.1, min(2.0, scale))
 
     calib_run = new_run_id(prefix="calib")
     out_dir = models_root / calib_run
