@@ -1,0 +1,9 @@
+version: v2
+features:
+  - name: ret_1
+  - name: ret_5
+  - name: ret_20
+  - name: vol_z_20
+  - name: oi_z_20
+  - name: funding_z_20
+  - name: mid_price
