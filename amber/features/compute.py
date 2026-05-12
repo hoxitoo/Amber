@@ -31,12 +31,12 @@ def compute_batch_features(raw_root: Path, out_root: Path, symbols: list[str]) -
     written = 0
 
     for symbol in symbols:
-        source = raw_root / "ticks" / symbol / "part-000.jsonl"
+        source = raw_root / "normalized" / symbol / "part-000.jsonl"
         rows = _read_jsonl(source)
         if not rows:
             continue
 
-        last_series = [float(r["last"]) for r in rows]
+        last_series = [float(r["close"]) for r in rows]
         volume_series = [float(r.get("volume_1m", 0.0)) for r in rows]
 
         feature_row = {
@@ -44,6 +44,8 @@ def compute_batch_features(raw_root: Path, out_root: Path, symbols: list[str]) -
             "ts": rows[-1]["ts"],
             "ret_1m": _safe_ret(last_series),
             "mid_price": (float(rows[-1]["bid"]) + float(rows[-1]["ask"])) / 2.0,
+            "funding": float(rows[-1].get("funding", 0.0)),
+            "oi": float(rows[-1].get("oi", 0.0)),
             "vol_mean": mean(volume_series),
             "obs": len(rows),
         }

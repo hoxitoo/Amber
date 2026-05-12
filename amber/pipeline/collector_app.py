@@ -6,7 +6,8 @@ from pathlib import Path
 from amber.common.config import ConfigLoader
 from amber.common.logging import setup_logging
 from amber.common.manifest import ArtifactManifest, new_run_id, write_manifest
-from amber.exchange.bybit_client import BybitClient
+from amber.exchange.bybit_public import BybitPublicClient
+from amber.exchange.normalizer import BybitNormalizer
 from amber.storage.parquet_sink import ParquetSink
 from amber.storage.state_store import StateStore
 
@@ -24,12 +25,16 @@ def main() -> None:
 
     sink = ParquetSink(data_root)
     state = StateStore(state_root)
-    client = BybitClient()
+    client = BybitPublicClient()
+    normalizer = BybitNormalizer()
 
     emitted = 0
     for symbol in symbols:
-        tick = client.fetch_stub_tick(symbol)
-        sink.write_records(topic="ticks", symbol=symbol, records=[client.as_dict(tick)])
+        normalizer.update_ticker(client.get_ticker(symbol))
+        normalizer.update_oi(client.get_open_interest(symbol))
+        normalizer.update_funding(client.get_funding(symbol))
+        row = normalizer.to_normalized(client.get_candle(symbol, tf="1m"))
+        sink.write_records(topic="normalized", symbol=symbol, records=[row.model_dump()])
         emitted += 1
 
     state.set("collector", {"run_id": run_id, "emitted_records": emitted})
@@ -37,10 +42,10 @@ def main() -> None:
         run_id=run_id,
         artifact_type="collector_run",
         artifact_version="v1",
-        created_at=client.fetch_stub_tick(symbols[0]).ts,
+        created_at=str(client._now_ms()),
         config_ref="config/amber.yaml",
         feature_spec_ref="config/features.yaml",
-        metadata={"symbols": symbols, "emitted_records": emitted},
+        metadata={"symbols": symbols, "emitted_records": emitted, "topic": "normalized"},
     )
     write_manifest(data_root / "manifests" / run_id / "manifest.json", manifest)
     logger.info("collector finished run_id=%s emitted=%s", run_id, emitted)
