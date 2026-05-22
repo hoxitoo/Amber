@@ -21,7 +21,6 @@ def _fit_baseline(rows: list[dict[str, Any]]) -> dict[str, Any]:
     ret_vals = [float(r.get("ret_1", 0.0)) for r in rows]
     vol_vals = [float(r.get("vol_z_20", 0.0)) for r in rows]
     up_labels = [int(r.get("up_hit", 0)) for r in rows]
-<<<<<<< HEAD
     down_labels = [int(r.get("down_hit", 0)) for r in rows]
 
     pump = {
@@ -40,20 +39,6 @@ def _fit_baseline(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "features": ["ret_1", "vol_z_20"],
         "heads": {"pump": pump, "dump": dump},
         "train_rows": len(rows),
-=======
-
-    w_ret = 8.0
-    w_vol = 0.01
-    b = -((sum(up_labels) / len(up_labels)) - 0.5)
-
-    return {
-        "model_type": "baseline_logistic_v1",
-        "features": ["ret_1", "vol_z_20"],
-        "weights": {"ret_1": w_ret, "vol_z_20": w_vol},
-        "bias": b,
-        "train_rows": len(rows),
-        "label_rate": sum(up_labels) / len(up_labels),
->>>>>>> origin/main
         "ret_mean": sum(ret_vals) / len(ret_vals),
         "vol_mean": sum(vol_vals) / len(vol_vals),
     }
@@ -75,15 +60,9 @@ def train_model(datasets_root: Path, models_root: Path) -> dict[str, Any]:
         if not tr or not va:
             continue
         m = _fit_baseline(tr)
-<<<<<<< HEAD
         wp = m["heads"]["pump"]["weights"]
         bp = float(m["heads"]["pump"]["bias"])
         probs = [1.0 / (1.0 + math.exp(-(wp["ret_1"] * float(r.get("ret_1", 0.0)) + wp["vol_z_20"] * float(r.get("vol_z_20", 0.0)) + bp))) for r in va]
-=======
-        w = m["weights"]
-        b = float(m["bias"])
-        probs = [1.0 / (1.0 + math.exp(-(w["ret_1"] * float(r.get("ret_1", 0.0)) + w["vol_z_20"] * float(r.get("vol_z_20", 0.0)) + b))) for r in va]
->>>>>>> origin/main
         y = [int(r.get("up_hit", 0)) for r in va]
         brier = sum((p - yt) ** 2 for p, yt in zip(probs, y)) / len(y)
         fold_stats.append({"val_rows": float(len(va)), "brier": float(brier)})
@@ -107,12 +86,8 @@ def train_model(datasets_root: Path, models_root: Path) -> dict[str, Any]:
     )
     write_manifest(out_dir / "manifest.json", manifest)
 
-<<<<<<< HEAD
     wp = model["heads"]["pump"]["weights"]
     bp = model["heads"]["pump"]["bias"]
     z = [wp["ret_1"] * float(r.get("ret_1", 0.0)) + wp["vol_z_20"] * float(r.get("vol_z_20", 0.0)) + bp for r in rows]
-=======
-    z = [model["weights"]["ret_1"] * float(r.get("ret_1", 0.0)) + model["weights"]["vol_z_20"] * float(r.get("vol_z_20", 0.0)) + model["bias"] for r in rows]
->>>>>>> origin/main
     p = [1.0 / (1.0 + math.exp(-v)) for v in z]
     return {"run_id": run_id, "train_rows": len(rows), "avg_raw_prob": sum(p) / len(p), "cv_folds": len(fold_stats)}

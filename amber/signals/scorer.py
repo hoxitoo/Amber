@@ -14,14 +14,10 @@ def _load_latest_calibration(models_root: Path) -> dict[str, Any]:
     calib_dirs = sorted([p for p in models_root.iterdir() if p.is_dir() and p.name.startswith("calib_")])
     if not calib_dirs:
         return {"method": "identity"}
-<<<<<<< HEAD
     try:
         return json.loads((calib_dirs[-1] / "calibration.json").read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return {"method": "identity"}
-=======
-    return json.loads((calib_dirs[-1] / "calibration.json").read_text(encoding="utf-8"))
->>>>>>> origin/main
 
 
 def _interp(x: list[float], y: list[float], v: float) -> float:
@@ -51,7 +47,6 @@ def calibrated_prob(raw: float, calibration: dict[str, Any]) -> float:
     return max(0.0, min(1.0, p))
 
 
-<<<<<<< HEAD
 
 
 def _head_weights(model: dict[str, Any], target: str) -> dict[str, float]:
@@ -61,8 +56,6 @@ def _head_weights(model: dict[str, Any], target: str) -> dict[str, float]:
         return {"ret_1": float(w.get("ret_1", 0.0)), "vol_z_20": float(w.get("vol_z_20", 0.0))}
     w = model.get("weights", {})
     return {"ret_1": float(w.get("ret_1", 0.0)), "vol_z_20": float(w.get("vol_z_20", 0.0))}
-=======
->>>>>>> origin/main
 def score_signal(feature_row: dict[str, Any], models_root: Path, config_version: str = "v1") -> SignalV1:
     model = load_latest_model(models_root)
     calib = _load_latest_calibration(models_root)
@@ -70,18 +63,12 @@ def score_signal(feature_row: dict[str, Any], models_root: Path, config_version:
     ret_1 = float(feature_row.get("ret_1", 0.0))
     vol_z_20 = float(feature_row.get("vol_z_20", 0.0))
 
-<<<<<<< HEAD
     up_raw = infer_raw_prob(model, ret_1=ret_1, vol_z_20=vol_z_20, target="pump")
     down_raw = infer_raw_prob(model, ret_1=ret_1, vol_z_20=vol_z_20, target="dump")
-=======
-    up_raw = infer_raw_prob(model, ret_1=ret_1, vol_z_20=vol_z_20)
-    down_raw = max(0.0, min(1.0, 1.0 - up_raw))
->>>>>>> origin/main
 
     up_cal = calibrated_prob(up_raw, calibration=calib)
     down_cal = calibrated_prob(down_raw, calibration=calib)
 
-<<<<<<< HEAD
     pump_w = _head_weights(model, target="pump")
     dump_w = _head_weights(model, target="dump")
     directional = up_cal - down_cal
@@ -92,20 +79,11 @@ def score_signal(feature_row: dict[str, Any], models_root: Path, config_version:
             {"pump_vol_z_20": pump_w["vol_z_20"] * vol_z_20},
             {"dump_ret_1": dump_w["ret_1"] * ret_1},
             {"dump_vol_z_20": dump_w["vol_z_20"] * vol_z_20},
-=======
-    explanation = SignalExplanation(
-        top_feature_impacts=[
-            {"ret_1": float(model["weights"]["ret_1"]) * ret_1},
-            {"vol_z_20": float(model["weights"]["vol_z_20"]) * vol_z_20},
->>>>>>> origin/main
         ],
         rule_trace=[
             {"rule": "model_inference", "passed": True},
             {"rule": "calibration_applied", "passed": True, "method": calib.get("method", "identity")},
-<<<<<<< HEAD
             {"rule": "directional_score", "value": directional},
-=======
->>>>>>> origin/main
         ],
     )
 

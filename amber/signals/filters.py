@@ -15,12 +15,8 @@ def spread_bps(signal: SignalV1) -> float:
     ask = float(signal.market_context.get("ask", 0.0))
     mid = float(signal.market_context.get("mid_price", 0.0))
     if bid <= 0 or ask <= 0 or mid <= 0:
-<<<<<<< HEAD
         ctx_spread = signal.market_context.get("spread_bps")
         return float(ctx_spread) if ctx_spread is not None else 0.0
-=======
-        return 0.0
->>>>>>> origin/main
     return ((ask - bid) / mid) * 10_000
 
 
