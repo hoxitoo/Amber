@@ -1,13 +1,9 @@
 import unittest
-<<<<<<< HEAD
 import tempfile
 import json
 from pathlib import Path
 
 from amber.models.calibrate import calibrate_model
-=======
-
->>>>>>> origin/main
 from amber.signals.scorer import calibrated_prob
 
 
@@ -18,7 +14,6 @@ class TestCalibration(unittest.TestCase):
         self.assertGreater(p, 0.25)
         self.assertLessEqual(p, 1.0)
 
-<<<<<<< HEAD
     def test_calibrate_model_raises_if_no_datasets(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -50,8 +45,6 @@ class TestCalibration(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Invalid JSONL"):
                 calibrate_model(models_root=models, datasets_root=root / "datasets")
 
-=======
->>>>>>> origin/main
 
 if __name__ == "__main__":
     unittest.main()

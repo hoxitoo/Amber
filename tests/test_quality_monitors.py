@@ -1,15 +1,9 @@
-<<<<<<< HEAD
 import json
 import unittest
 import tempfile
 from pathlib import Path
 
 from amber.monitoring.drift import PredictionBiasMonitor, RollingAUCMonitor, detect_drift, psi_monitor
-=======
-import unittest
-
-from amber.monitoring.drift import PredictionBiasMonitor, RollingAUCMonitor, psi_monitor
->>>>>>> origin/main
 
 
 class TestQualityMonitors(unittest.TestCase):
@@ -36,7 +30,6 @@ class TestQualityMonitors(unittest.TestCase):
         if m.value() is not None:
             self.assertGreaterEqual(m.value(), 0.5)
 
-<<<<<<< HEAD
     def test_detect_drift_ignores_corrupted_rows(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -67,8 +60,6 @@ class TestQualityMonitors(unittest.TestCase):
             (p / "part-000.jsonl").write_text("\n".join(rows) + "\n", encoding="utf-8")
             out = detect_drift(root, "BTCUSDT", threshold=0.005)
             self.assertTrue(bool(out["drift"]))
-=======
->>>>>>> origin/main
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,5 +1,4 @@
 from pathlib import Path
-<<<<<<< HEAD
 import importlib.util
 import os
 import subprocess
@@ -35,14 +34,6 @@ def _ensure_dependencies() -> None:
 
 if __name__ == "__main__":
     _ensure_dependencies()
-=======
-import sys
-import unittest
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-if __name__ == "__main__":
->>>>>>> origin/main
     suite = unittest.defaultTestLoader.discover("tests")
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     raise SystemExit(0 if result.wasSuccessful() else 1)

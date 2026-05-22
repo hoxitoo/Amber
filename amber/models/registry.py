@@ -32,7 +32,6 @@ def latest_registered(models_root: Path) -> dict[str, Any] | None:
     lines = registry.read_text(encoding="utf-8").splitlines()
     if not lines:
         return None
-<<<<<<< HEAD
     for line in reversed(lines):
         if not line.strip():
             continue
@@ -41,6 +40,3 @@ def latest_registered(models_root: Path) -> dict[str, Any] | None:
         except json.JSONDecodeError:
             continue
     return None
-=======
-    return json.loads(lines[-1])
->>>>>>> origin/main
