@@ -1,0 +1,35 @@
+from __future__ import annotations
+
+import json
+import math
+from pathlib import Path
+from typing import Any
+
+from amber.models.registry import latest_registered
+
+
+def load_latest_model(models_root: Path) -> dict[str, Any]:
+    reg = latest_registered(models_root)
+    if reg:
+        model_dir = models_root / reg["model_run_id"]
+        return json.loads((model_dir / "model.json").read_text(encoding="utf-8"))
+
+    candidates = sorted([p for p in models_root.iterdir() if p.is_dir() and p.name.startswith("model_")])
+    if not candidates:
+        raise ValueError(f"No model_* directories found under: {models_root}")
+    latest = candidates[-1]
+    return json.loads((latest / "model.json").read_text(encoding="utf-8"))
+
+
+def _resolve_head(model: dict[str, Any], target: str) -> tuple[dict[str, float], float]:
+    heads = model.get("heads")
+    if isinstance(heads, dict) and target in heads:
+        head = heads[target]
+        return head["weights"], float(head["bias"])
+    return model["weights"], float(model["bias"])
+
+
+def infer_raw_prob(model: dict[str, Any], ret_1: float, vol_z_20: float, target: str = "pump") -> float:
+    w, b = _resolve_head(model, target=target)
+    z = w["ret_1"] * ret_1 + w["vol_z_20"] * vol_z_20 + b
+    return 1.0 / (1.0 + math.exp(-z))
