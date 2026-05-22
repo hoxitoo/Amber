@@ -1,6 +1,6 @@
 # Project Amber
 
-<<<<<<< HEAD
+HEAD
 Amber — local-first ML scanner for Bybit futures that predicts **event probabilities** (`pump/dump`) and emits alerts.
 
 > Amber is not an auto-trading bot. No order execution logic is in scope.
