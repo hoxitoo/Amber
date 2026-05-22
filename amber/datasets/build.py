@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 import json
-<<<<<<< HEAD
 import math
-=======
->>>>>>> origin/main
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -18,16 +15,11 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return out
     with path.open("r", encoding="utf-8") as fh:
-<<<<<<< HEAD
         for lineno, line in enumerate(fh, start=1):
             try:
                 out.append(json.loads(line))
             except json.JSONDecodeError as exc:
                 raise ValueError(f"Invalid JSONL in {path} at line {lineno}: {exc.msg}") from exc
-=======
-        for line in fh:
-            out.append(json.loads(line))
->>>>>>> origin/main
     return out
 
 
@@ -38,7 +30,6 @@ def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
-<<<<<<< HEAD
 def _rolling_vol(values: list[float], end_idx: int, window: int) -> float:
     start = max(0, end_idx - window + 1)
     chunk = values[start : end_idx + 1]
@@ -72,8 +63,6 @@ def _validate_horizons(horizon_steps: int, horizon_steps_list: list[int] | None)
     return [horizon_steps]
 
 
-=======
->>>>>>> origin/main
 def build_dataset(
     features_root: Path,
     datasets_root: Path,
@@ -81,7 +70,6 @@ def build_dataset(
     horizon_steps: int = 5,
     up_pct: float = 0.002,
     down_pct: float = 0.002,
-<<<<<<< HEAD
     adaptive_thresholds: bool = False,
     threshold_k: float = 2.5,
     threshold_vol_window: int = 60,
@@ -103,9 +91,6 @@ def build_dataset(
         if threshold_floor <= 0 or threshold_cap <= 0 or threshold_floor > threshold_cap:
             raise ValueError("threshold_floor/cap must be > 0 and floor <= cap")
 
-=======
-) -> dict[str, int]:
->>>>>>> origin/main
     run_id = new_run_id(prefix="dataset")
     out_rows: list[dict[str, Any]] = []
 
@@ -116,7 +101,6 @@ def build_dataset(
             continue
 
         prices = [float(r.get("mid_price", 0.0)) for r in rows]
-<<<<<<< HEAD
         ret_1_vals = [float(r.get("ret_1", 0.0)) for r in rows]
         clean_idx = [i for i, r in enumerate(rows) if not bool(r.get("is_synthetic", False))]
 
@@ -154,28 +138,6 @@ def build_dataset(
                         "down_pct": row_down,
                     }
                 )
-=======
-        clean_idx = [i for i,r in enumerate(rows) if not bool(r.get("is_synthetic", False))]
-        for i in clean_idx:
-            future = prices[i : i + horizon_steps + 1]
-            labels = label_event_path(future, up_pct=up_pct, down_pct=down_pct)
-            out_rows.append(
-                {
-                    "symbol": symbol,
-                    "ts": rows[i]["ts"],
-                    "ret_1": rows[i].get("ret_1", 0.0),
-                    "vol_z_20": rows[i].get("vol_z_20", 0.0),
-                    "obs": rows[i].get("obs", 0),
-                    "up_hit": labels["up_hit"],
-                    "down_hit": labels["down_hit"],
-                    "first_hit": labels["first_hit"],
-                    "tte_idx": labels["tte_idx"],
-                    "horizon_steps": horizon_steps,
-                    "up_pct": up_pct,
-                    "down_pct": down_pct,
-                }
-            )
->>>>>>> origin/main
 
     dataset_dir = datasets_root / run_id
     _write_jsonl(dataset_dir / "dataset.jsonl", out_rows)
@@ -190,7 +152,6 @@ def build_dataset(
         metadata={
             "rows": len(out_rows),
             "symbols": symbols,
-<<<<<<< HEAD
             "horizons": horizons,
             "up_pct": up_pct,
             "down_pct": down_pct,
@@ -199,11 +160,6 @@ def build_dataset(
             "threshold_vol_window": threshold_vol_window,
             "threshold_floor": threshold_floor,
             "threshold_cap": threshold_cap,
-=======
-            "horizon_steps": horizon_steps,
-            "up_pct": up_pct,
-            "down_pct": down_pct,
->>>>>>> origin/main
         },
     )
     write_manifest(dataset_dir / "manifest.json", manifest)

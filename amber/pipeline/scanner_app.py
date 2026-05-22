@@ -5,11 +5,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-<<<<<<< HEAD
 from amber.alerts.router import AlertRateLimiter, route_alert
-=======
-from amber.alerts.router import route_alert
->>>>>>> origin/main
 from amber.common.config import ConfigLoader
 from amber.common.logging import setup_logging
 from amber.common.types import SignalV1
@@ -29,7 +25,6 @@ def _read_latest_feature_rows(features_root: Path, allowed_symbols: set[str] | N
         lines = file.read_text(encoding="utf-8").splitlines()
         if not lines:
             continue
-<<<<<<< HEAD
 
         parsed: dict[str, Any] | None = None
         for raw in reversed(lines):
@@ -42,9 +37,6 @@ def _read_latest_feature_rows(features_root: Path, allowed_symbols: set[str] | N
             logger.warning("skip feature file with invalid JSONL tail: %s", file)
             continue
         rows.append(parsed)
-=======
-        rows.append(json.loads(lines[-1]))
->>>>>>> origin/main
     return rows
 
 
@@ -55,14 +47,11 @@ def _append_signal(logs_root: Path, signal: SignalV1) -> None:
         fh.write(signal.model_dump_json() + "\n")
 
 
-<<<<<<< HEAD
 
 
 def _build_alert_limiter(thresholds_cfg: dict[str, Any]) -> AlertRateLimiter:
     cooldown = int(thresholds_cfg.get("cooldown_sec", 0))
     return AlertRateLimiter(cooldown_sec=max(0, cooldown))
-=======
->>>>>>> origin/main
 def main() -> None:
     config = ConfigLoader(Path.cwd()).load_yaml("config/amber.yaml")
     thresholds = ConfigLoader(Path.cwd()).load_yaml("config/thresholds.yaml")
@@ -82,10 +71,7 @@ def main() -> None:
     )
 
     feature_rows = _read_latest_feature_rows(features_root, allowed_symbols=universe)
-<<<<<<< HEAD
     alert_limiter = _build_alert_limiter(thresholds["thresholds"])
-=======
->>>>>>> origin/main
     emitted = 0
     for row in feature_rows:
         signal = score_signal(row, models_root=models_root, config_version=config["signal"]["schema_version"])
@@ -97,11 +83,7 @@ def main() -> None:
             spread_max_bps=float(thresholds["thresholds"].get("spread_bps_max", 30.0)),
         ) and gate.allow(signal):
             _append_signal(logs_root, signal)
-<<<<<<< HEAD
             route_alert(signal, channels=alert_channels, limiter=alert_limiter)
-=======
-            route_alert(signal, channels=alert_channels)
->>>>>>> origin/main
             emitted += 1
 
     logger.info("scanner finished universe=%s symbols=%s emitted=%s", len(universe), len(feature_rows), emitted)
