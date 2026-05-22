@@ -39,11 +39,14 @@ class TestFilters(unittest.TestCase):
             )
         )
 
+<<<<<<< HEAD
     def test_spread_bps_fallback_to_context_value(self):
         s = self._sig()
         s.market_context = {"spread_bps": 12.5}
         self.assertAlmostEqual(spread_bps(s), 12.5)
 
+=======
+>>>>>>> origin/main
 
 if __name__ == "__main__":
     unittest.main()

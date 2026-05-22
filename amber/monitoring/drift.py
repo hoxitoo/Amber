@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+<<<<<<< HEAD
 import math
+=======
+>>>>>>> origin/main
 from collections import deque
 from pathlib import Path
 from statistics import mean
@@ -18,6 +21,7 @@ def detect_drift(features_root: Path, symbol: str, threshold: float = 0.05) -> d
     if not path.exists():
         return {"drift": False, "delta_ret_mean": 0.0}
 
+<<<<<<< HEAD
     rows: list[dict[str, Any]] = []
     with path.open("r", encoding="utf-8") as fh:
         for line in fh:
@@ -27,6 +31,9 @@ def detect_drift(features_root: Path, symbol: str, threshold: float = 0.05) -> d
                 rows.append(json.loads(line))
             except json.JSONDecodeError:
                 continue
+=======
+    rows = [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip()]
+>>>>>>> origin/main
     if len(rows) < 4:
         return {"drift": False, "delta_ret_mean": 0.0}
 
@@ -93,7 +100,11 @@ def psi(expected: list[float], actual: list[float], bins: int = 10) -> float:
 
     e = hist(expected)
     a = hist(actual)
+<<<<<<< HEAD
     return sum((av - ev) * math.log(av / ev) for ev, av in zip(e, a))
+=======
+    return sum((av - ev) * __import__('math').log(av / ev) for ev, av in zip(e, a))
+>>>>>>> origin/main
 
 
 def psi_monitor(reference: list[float], live: list[float]) -> dict[str, float | str]:

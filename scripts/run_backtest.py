@@ -1,5 +1,8 @@
 from pathlib import Path
+<<<<<<< HEAD
 import json
+=======
+>>>>>>> origin/main
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -11,4 +14,8 @@ from amber.common.config import ConfigLoader
 if __name__ == "__main__":
     cfg = ConfigLoader(Path.cwd()).load_yaml("config/amber.yaml")
     res = event_backtest(Path(cfg["storage"]["datasets_dir"]))
+<<<<<<< HEAD
     print(json.dumps(res, indent=2, sort_keys=True))
+=======
+    print(res)
+>>>>>>> origin/main

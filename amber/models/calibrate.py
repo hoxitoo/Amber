@@ -12,11 +12,16 @@ from amber.models.registry import latest_registered
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     with path.open("r", encoding="utf-8") as fh:
+<<<<<<< HEAD
         for lineno, line in enumerate(fh, start=1):
             try:
                 rows.append(json.loads(line))
             except json.JSONDecodeError as exc:
                 raise ValueError(f"Invalid JSONL in {path} at line {lineno}: {exc.msg}") from exc
+=======
+        for line in fh:
+            rows.append(json.loads(line))
+>>>>>>> origin/main
     return rows
 
 
@@ -25,17 +30,25 @@ def calibrate_model(models_root: Path, datasets_root: Path) -> dict[str, Any]:
     reg = latest_registered(models_root)
     model_run_id = reg["model_run_id"] if reg else "unregistered"
 
+<<<<<<< HEAD
     if not datasets_root.exists():
         raise ValueError(f"No dataset_* directories found under: {datasets_root}")
     candidates = sorted([p for p in datasets_root.iterdir() if p.is_dir() and p.name.startswith("dataset_")])
     if not candidates:
         raise ValueError(f"No dataset_* directories found under: {datasets_root}")
     latest_ds = candidates[-1]
+=======
+    latest_ds = sorted([p for p in datasets_root.iterdir() if p.is_dir() and p.name.startswith("dataset_")])[-1]
+>>>>>>> origin/main
     rows = _read_jsonl(latest_ds / "dataset.jsonl")
     if not rows:
         raise ValueError("Dataset is empty; cannot calibrate")
 
+<<<<<<< HEAD
     raw = [infer_raw_prob(model, float(r.get("ret_1", 0.0)), float(r.get("vol_z_20", 0.0)), target="pump") for r in rows]
+=======
+    raw = [infer_raw_prob(model, float(r.get("ret_1", 0.0)), float(r.get("vol_z_20", 0.0))) for r in rows]
+>>>>>>> origin/main
     y = [int(r.get("up_hit", 0)) for r in rows]
 
     payload: dict[str, Any]

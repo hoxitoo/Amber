@@ -10,15 +10,21 @@ from amber.models.infer import infer_raw_prob, load_latest_model
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     with path.open("r", encoding="utf-8") as fh:
+<<<<<<< HEAD
         for lineno, line in enumerate(fh, start=1):
             try:
                 rows.append(json.loads(line))
             except json.JSONDecodeError as exc:
                 raise ValueError(f"Invalid JSONL in {path} at line {lineno}: {exc.msg}") from exc
+=======
+        for line in fh:
+            rows.append(json.loads(line))
+>>>>>>> origin/main
     return rows
 
 
 def evaluate_model(models_root: Path, datasets_root: Path, threshold: float = 0.7) -> dict[str, float]:
+<<<<<<< HEAD
     if threshold < 0.0 or threshold > 1.0:
         raise ValueError("threshold must be in [0, 1]")
     model = load_latest_model(models_root)
@@ -28,11 +34,19 @@ def evaluate_model(models_root: Path, datasets_root: Path, threshold: float = 0.
     if not candidates:
         raise ValueError(f"No dataset_* directories found under: {datasets_root}")
     latest_ds = candidates[-1]
+=======
+    model = load_latest_model(models_root)
+    latest_ds = sorted([p for p in datasets_root.iterdir() if p.is_dir() and p.name.startswith("dataset_")])[-1]
+>>>>>>> origin/main
     rows = _read_jsonl(latest_ds / "dataset.jsonl")
     if not rows:
         raise ValueError("Dataset is empty; cannot evaluate")
 
+<<<<<<< HEAD
     probs = [infer_raw_prob(model, float(r.get("ret_1", 0.0)), float(r.get("vol_z_20", 0.0)), target="pump") for r in rows]
+=======
+    probs = [infer_raw_prob(model, float(r.get("ret_1", 0.0)), float(r.get("vol_z_20", 0.0))) for r in rows]
+>>>>>>> origin/main
     y = [int(r.get("up_hit", 0)) for r in rows]
 
     preds = [1 if p >= threshold else 0 for p in probs]

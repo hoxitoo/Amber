@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+<<<<<<< HEAD
 import re
 
 
@@ -18,3 +19,11 @@ def artifact_dir(root: Path, kind: str, run_id: str) -> Path:
 def _validate_segment(value: str, name: str) -> None:
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", value):
         raise ValueError(f"Invalid {name}: {value!r}")
+=======
+
+
+def artifact_dir(root: Path, kind: str, run_id: str) -> Path:
+    target = root / kind / run_id
+    target.mkdir(parents=True, exist_ok=True)
+    return target
+>>>>>>> origin/main

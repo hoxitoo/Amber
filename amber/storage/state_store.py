@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+<<<<<<< HEAD
 import re
+=======
+>>>>>>> origin/main
 from typing import Any
 
 
@@ -12,6 +15,7 @@ class StateStore:
         self.state_root.mkdir(parents=True, exist_ok=True)
 
     def _path(self, key: str) -> Path:
+<<<<<<< HEAD
         if not re.fullmatch(r"[A-Za-z0-9_.-]+", key):
             raise ValueError(f"Invalid state key: {key!r}")
         path = (self.state_root / f"{key}.json").resolve()
@@ -19,6 +23,9 @@ class StateStore:
         if root not in path.parents and path != root:
             raise ValueError("State path escapes state root")
         return path
+=======
+        return self.state_root / f"{key}.json"
+>>>>>>> origin/main
 
     def get(self, key: str) -> dict[str, Any]:
         path = self._path(key)

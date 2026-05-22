@@ -26,6 +26,7 @@ signal:
 alerts:
   channels:
   - console
+<<<<<<< HEAD
 
 labeling:
   horizon_steps: 5
@@ -37,3 +38,5 @@ labeling:
   threshold_vol_window: 60
   threshold_floor: 0.003
   threshold_cap: 0.05
+=======
+>>>>>>> origin/main

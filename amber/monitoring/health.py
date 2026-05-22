@@ -13,6 +13,7 @@ class HealthReport:
 
 
 def _latest_mtime(path: Path, pattern: str) -> float | None:
+<<<<<<< HEAD
     latest: float | None = None
     for file in path.glob(pattern):
         mtime = file.stat().st_mtime
@@ -23,12 +24,22 @@ def _latest_mtime(path: Path, pattern: str) -> float | None:
 def check_health(data_root: Path, max_age_sec: int = 3600) -> HealthReport:
     if max_age_sec <= 0:
         raise ValueError("max_age_sec must be positive")
+=======
+    files = list(path.glob(pattern))
+    if not files:
+        return None
+    return max(f.stat().st_mtime for f in files)
+
+
+def check_health(data_root: Path, max_age_sec: int = 3600) -> HealthReport:
+>>>>>>> origin/main
     now = datetime.now(timezone.utc).timestamp()
 
     raw_mtime = _latest_mtime(data_root / "raw", "ticks/*/part-000.jsonl")
     feat_mtime = _latest_mtime(data_root / "features", "features/*/part-000.jsonl")
     model_mtime = _latest_mtime(data_root / "models", "model_*/model.json")
 
+<<<<<<< HEAD
     raw_age_sec = None if raw_mtime is None else now - raw_mtime
     feat_age_sec = None if feat_mtime is None else now - feat_mtime
     model_age_sec = None if model_mtime is None else now - model_mtime
@@ -44,3 +55,11 @@ def check_health(data_root: Path, max_age_sec: int = 3600) -> HealthReport:
         "model_age_sec": model_age_sec,
     }
     return HealthReport(ok=raw_fresh and features_fresh and model_present, checks=checks)
+=======
+    checks = {
+        "raw_fresh": raw_mtime is not None and (now - raw_mtime) <= max_age_sec,
+        "features_fresh": feat_mtime is not None and (now - feat_mtime) <= max_age_sec,
+        "model_present": model_mtime is not None,
+    }
+    return HealthReport(ok=all(checks.values()), checks=checks)
+>>>>>>> origin/main

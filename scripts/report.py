@@ -1,4 +1,5 @@
 from pathlib import Path
+<<<<<<< HEAD
 import json
 import sys
 
@@ -13,6 +14,13 @@ def main() -> None:
     report = build_system_report(cfg["storage"])
     print(json.dumps(report, ensure_ascii=False, indent=2))
 
+=======
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+def main() -> None:
+    print("report placeholder")
+>>>>>>> origin/main
 
 if __name__ == "__main__":
     main()
