@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -40,7 +41,7 @@ def _latest_eval_metrics(logs_dir: Path) -> dict[str, float]:
         "model_brier_up_cal",
         "model_brier_down_cal",
     }
-    latest: dict[str, float] = {}
+    latest: dict[str, tuple[str, float]] = {}
     with path.open("r", encoding="utf-8") as fh:
         for line in fh:
             try:
@@ -51,10 +52,17 @@ def _latest_eval_metrics(logs_dir: Path) -> dict[str, float]:
             if metric not in wanted:
                 continue
             try:
-                latest[str(metric)] = float(row.get("value"))
+                value = float(row.get("value"))
             except (TypeError, ValueError):
                 continue
-    return latest
+            if not math.isfinite(value):
+                continue
+            ts = str(row.get("ts", ""))
+            key = str(metric)
+            prev = latest.get(key)
+            if prev is None or ts >= prev[0]:
+                latest[key] = (ts, value)
+    return {k: v for k, (_, v) in latest.items()}
 
 def build_system_report(storage: dict[str, str]) -> dict[str, Any]:
     logs_dir = _require_storage_key(storage, "logs_dir")

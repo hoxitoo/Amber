@@ -44,6 +44,33 @@ class TestReporting(unittest.TestCase):
             self.assertIn("model_eval", rep)
             self.assertEqual(rep["model_eval"]["model_precision_up_at_threshold"], 0.7)
 
+    def test_build_system_report_model_eval_uses_latest_finite_values(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            storage = {
+                "logs_dir": str(root / "logs"),
+                "datasets_dir": str(root / "datasets"),
+                "raw_dir": str(root / "raw"),
+                "features_dir": str(root / "features"),
+                "models_dir": str(root / "models"),
+            }
+            (root / "raw" / "normalized" / "BTCUSDT").mkdir(parents=True, exist_ok=True)
+            (root / "raw" / "normalized" / "BTCUSDT" / "part-000.jsonl").write_text(json.dumps({"ts": 1}) + "\n", encoding="utf-8")
+            (root / "raw" / "ticks" / "BTCUSDT").mkdir(parents=True, exist_ok=True)
+            (root / "raw" / "ticks" / "BTCUSDT" / "part-000.jsonl").write_text(json.dumps({"ts": 1}) + "\n", encoding="utf-8")
+            (root / "features" / "features" / "BTCUSDT").mkdir(parents=True, exist_ok=True)
+            (root / "features" / "features" / "BTCUSDT" / "part-000.jsonl").write_text(json.dumps({"ts": 1}) + "\n", encoding="utf-8")
+            (root / "models" / "model_x").mkdir(parents=True, exist_ok=True)
+            (root / "models" / "model_x" / "model.json").write_text("{}", encoding="utf-8")
+            (root / "logs").mkdir(parents=True, exist_ok=True)
+            with (root / "logs" / "metrics.jsonl").open("w", encoding="utf-8") as fh:
+                fh.write(json.dumps({"ts": "2026-01-01T00:00:00+00:00", "metric": "model_brier_up_cal", "value": 0.25}) + "\n")
+                fh.write(json.dumps({"ts": "2026-01-01T00:01:00+00:00", "metric": "model_brier_up_cal", "value": "nan"}) + "\n")
+                fh.write(json.dumps({"ts": "2026-01-01T00:02:00+00:00", "metric": "model_brier_up_cal", "value": 0.2}) + "\n")
+
+            rep = build_system_report(storage)
+            self.assertEqual(rep["model_eval"]["model_brier_up_cal"], 0.2)
+
 
 
 
