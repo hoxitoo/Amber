@@ -28,6 +28,11 @@ class TestReporting(unittest.TestCase):
             (root / "models" / "model_x" / "model.json").write_text("{}", encoding="utf-8")
             (root / "logs").mkdir(parents=True, exist_ok=True)
             (root / "logs" / "signals.jsonl").write_text(json.dumps({"prob_up_calibrated": 0.6, "prob_down_calibrated": 0.4}) + "\n", encoding="utf-8")
+            with (root / "logs" / "metrics.jsonl").open("w", encoding="utf-8") as fh:
+                fh.write(json.dumps({"metric": "model_precision_up_at_threshold", "value": 0.7}) + "\n")
+                fh.write(json.dumps({"metric": "model_precision_down_at_threshold", "value": 0.6}) + "\n")
+                fh.write(json.dumps({"metric": "model_brier_up_cal", "value": 0.2}) + "\n")
+                fh.write(json.dumps({"metric": "model_brier_down_cal", "value": 0.3}) + "\n")
 
             rep = build_system_report(storage)
             self.assertIn("health", rep)
@@ -36,6 +41,8 @@ class TestReporting(unittest.TestCase):
             self.assertIn("backtest_ok", rep)
             self.assertIn("overall_ok", rep)
             self.assertIn("overall_reason", rep)
+            self.assertIn("model_eval", rep)
+            self.assertEqual(rep["model_eval"]["model_precision_up_at_threshold"], 0.7)
 
 
 

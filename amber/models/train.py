@@ -21,7 +21,6 @@ def _fit_baseline(rows: list[dict[str, Any]]) -> dict[str, Any]:
     ret_vals = [float(r.get("ret_1", 0.0)) for r in rows]
     vol_vals = [float(r.get("vol_z_20", 0.0)) for r in rows]
     up_labels = [int(r.get("up_hit", 0)) for r in rows]
-<<<<<<< HEAD
     down_labels = [int(r.get("down_hit", 0)) for r in rows]
 
     pump = {
@@ -40,56 +39,68 @@ def _fit_baseline(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "features": ["ret_1", "vol_z_20"],
         "heads": {"pump": pump, "dump": dump},
         "train_rows": len(rows),
-=======
-
-    w_ret = 8.0
-    w_vol = 0.01
-    b = -((sum(up_labels) / len(up_labels)) - 0.5)
-
-    return {
-        "model_type": "baseline_logistic_v1",
-        "features": ["ret_1", "vol_z_20"],
-        "weights": {"ret_1": w_ret, "vol_z_20": w_vol},
-        "bias": b,
-        "train_rows": len(rows),
-        "label_rate": sum(up_labels) / len(up_labels),
->>>>>>> origin/main
         "ret_mean": sum(ret_vals) / len(ret_vals),
         "vol_mean": sum(vol_vals) / len(vol_vals),
     }
 
 
-def train_model(datasets_root: Path, models_root: Path) -> dict[str, Any]:
+def _mean(xs: list[float]) -> float:
+    return sum(xs) / len(xs) if xs else 0.0
+
+
+def _std(xs: list[float]) -> float:
+    if len(xs) < 2:
+        return 0.0
+    m = _mean(xs)
+    return math.sqrt(sum((x - m) ** 2 for x in xs) / len(xs))
+
+
+def train_model(
+    datasets_root: Path,
+    models_root: Path,
+    *,
+    cv_n_folds: int = 3,
+    cv_val_size: int = 50,
+    cv_gap_candles: int = 30,
+) -> dict[str, Any]:
     latest = sorted([p for p in datasets_root.iterdir() if p.is_dir() and p.name.startswith("dataset_")])[-1]
     rows = _read_jsonl(latest / "dataset.jsonl")
     if not rows:
         raise ValueError("Dataset is empty; run collectors/features/build_dataset first")
 
-    val_size = max(5, min(20, len(rows) // 4))
-    gap = max(1, min(5, len(rows) // 20))
-    folds = make_walk_forward_folds(len(rows), n_folds=3, val_size=val_size, gap=gap)
+    val_size = max(5, int(cv_val_size))
+    gap = max(1, int(cv_gap_candles))
+    n_folds = max(1, int(cv_n_folds))
+    folds = make_walk_forward_folds(len(rows), n_folds=n_folds, val_size=val_size, gap=gap)
     fold_stats: list[dict[str, float]] = []
+    skipped_folds = 0
     for fold in folds:
         tr = rows[fold.train_start : fold.train_end]
         va = rows[fold.val_start : fold.val_end]
         if not tr or not va:
+            skipped_folds += 1
             continue
         m = _fit_baseline(tr)
-<<<<<<< HEAD
         wp = m["heads"]["pump"]["weights"]
         bp = float(m["heads"]["pump"]["bias"])
         probs = [1.0 / (1.0 + math.exp(-(wp["ret_1"] * float(r.get("ret_1", 0.0)) + wp["vol_z_20"] * float(r.get("vol_z_20", 0.0)) + bp))) for r in va]
-=======
-        w = m["weights"]
-        b = float(m["bias"])
-        probs = [1.0 / (1.0 + math.exp(-(w["ret_1"] * float(r.get("ret_1", 0.0)) + w["vol_z_20"] * float(r.get("vol_z_20", 0.0)) + b))) for r in va]
->>>>>>> origin/main
         y = [int(r.get("up_hit", 0)) for r in va]
         brier = sum((p - yt) ** 2 for p, yt in zip(probs, y)) / len(y)
         fold_stats.append({"val_rows": float(len(va)), "brier": float(brier)})
 
     model = _fit_baseline(rows)
-    model["cv"] = {"n_folds": len(fold_stats), "fold_stats": fold_stats}
+    brier_values = [float(fs["brier"]) for fs in fold_stats]
+    model["cv"] = {
+        "n_folds": len(fold_stats),
+        "configured_n_folds": n_folds,
+        "generated_folds": len(folds),
+        "skipped_folds": skipped_folds,
+        "val_size": val_size,
+        "gap_candles": gap,
+        "brier_mean": _mean(brier_values),
+        "brier_std": _std(brier_values),
+        "fold_stats": fold_stats,
+    }
 
     run_id = new_run_id(prefix="model")
     out_dir = models_root / run_id
@@ -103,16 +114,31 @@ def train_model(datasets_root: Path, models_root: Path) -> dict[str, Any]:
         created_at=latest.name,
         config_ref="config/amber.yaml",
         feature_spec_ref="config/features.yaml",
-        metadata={"dataset_run": latest.name, "train_rows": len(rows), "formula": "sigmoid(w_ret*ret_1+w_vol*vol_z_20+b)", "cv_folds": len(fold_stats)},
+        metadata={
+            "dataset_run": latest.name,
+            "train_rows": len(rows),
+            "formula": "sigmoid(w_ret*ret_1+w_vol*vol_z_20+b)",
+            "cv_folds": len(fold_stats),
+            "cv_generated_folds": len(folds),
+            "cv_skipped_folds": skipped_folds,
+            "cv_gap_candles": gap,
+            "cv_brier_mean": _mean(brier_values),
+            "cv_brier_std": _std(brier_values),
+        },
     )
     write_manifest(out_dir / "manifest.json", manifest)
 
-<<<<<<< HEAD
     wp = model["heads"]["pump"]["weights"]
     bp = model["heads"]["pump"]["bias"]
     z = [wp["ret_1"] * float(r.get("ret_1", 0.0)) + wp["vol_z_20"] * float(r.get("vol_z_20", 0.0)) + bp for r in rows]
-=======
-    z = [model["weights"]["ret_1"] * float(r.get("ret_1", 0.0)) + model["weights"]["vol_z_20"] * float(r.get("vol_z_20", 0.0)) + model["bias"] for r in rows]
->>>>>>> origin/main
     p = [1.0 / (1.0 + math.exp(-v)) for v in z]
-    return {"run_id": run_id, "train_rows": len(rows), "avg_raw_prob": sum(p) / len(p), "cv_folds": len(fold_stats)}
+    return {
+        "run_id": run_id,
+        "train_rows": len(rows),
+        "avg_raw_prob": sum(p) / len(p),
+        "cv_folds": len(fold_stats),
+        "cv_generated_folds": len(folds),
+        "cv_skipped_folds": skipped_folds,
+        "cv_gap_candles": gap,
+        "cv_brier_mean": _mean(brier_values),
+    }

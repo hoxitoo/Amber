@@ -54,9 +54,11 @@ class TestModelLoading(unittest.TestCase):
             )
             sig = score_signal({"ts": 1, "symbol": "BTCUSDT", "ret_1": 0.01, "vol_z_20": 0.1}, root)
             keys = {list(x.keys())[0] for x in sig.explanation.top_feature_impacts}
+            self.assertEqual(len(sig.explanation.top_feature_impacts), 3)
             self.assertIn("pump_ret_1", keys)
-            self.assertIn("dump_ret_1", keys)
+            self.assertIn("dump_vol_z_20", keys)
             rules = [r.get("rule") for r in sig.explanation.rule_trace]
+            self.assertIn("explanation_method", rules)
             self.assertIn("directional_score", rules)
 
 

@@ -19,7 +19,6 @@ class TestUniverse(unittest.TestCase):
             self.assertEqual(len(u), 2)
             self.assertEqual(u[0], "B")
 
-<<<<<<< HEAD
     def test_select_universe_applies_liquidity_floor(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td) / "features"
@@ -36,8 +35,6 @@ class TestUniverse(unittest.TestCase):
             u = select_universe(root, top_k=3, min_dollar_volume=20_000)
             self.assertEqual(u, ["B", "C"])
 
-=======
->>>>>>> origin/main
 
 if __name__ == "__main__":
     unittest.main()

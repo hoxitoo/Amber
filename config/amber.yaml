@@ -26,7 +26,6 @@ signal:
 alerts:
   channels:
   - console
-<<<<<<< HEAD
 
 labeling:
   horizon_steps: 5
@@ -38,5 +37,13 @@ labeling:
   threshold_vol_window: 60
   threshold_floor: 0.003
   threshold_cap: 0.05
-=======
->>>>>>> origin/main
+
+model:
+  cv:
+    n_folds: 3
+    val_size: 50
+    gap_candles: 30
+  calibration:
+    holdout_ratio: 0.2
+  eval:
+    threshold: 0.7

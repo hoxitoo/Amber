@@ -7,14 +7,11 @@ from amber.backtest.backtester import event_backtest
 
 
 class TestBacktest(unittest.TestCase):
-<<<<<<< HEAD
     def test_event_backtest_raises_if_no_dataset_runs(self):
         with tempfile.TemporaryDirectory() as td:
             with self.assertRaisesRegex(ValueError, "No dataset_\\* directories found"):
                 event_backtest(Path(td))
 
-=======
->>>>>>> origin/main
     def test_event_backtest_runs(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -31,7 +28,6 @@ class TestBacktest(unittest.TestCase):
             res = event_backtest(root)
             self.assertEqual(res["signals"], 3)
             self.assertIn("sharpe", res)
-<<<<<<< HEAD
             self.assertAlmostEqual(res["resolution_rate"], 2 / 3)
             self.assertAlmostEqual(res["win_rate"], 1 / 2)
             self.assertGreaterEqual(res["profit_factor"], 0.0)
@@ -64,8 +60,6 @@ class TestBacktest(unittest.TestCase):
             (ds / "dataset.jsonl").write_text('{"up_hit": 1}\n{bad json}\n', encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "Invalid JSONL"):
                 event_backtest(root)
-=======
->>>>>>> origin/main
 
 
 if __name__ == "__main__":

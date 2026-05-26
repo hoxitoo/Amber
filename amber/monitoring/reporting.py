@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,33 @@ def _has_model_artifact(models_dir: Path) -> bool:
             return True
     return False
 
+
+def _latest_eval_metrics(logs_dir: Path) -> dict[str, float]:
+    path = logs_dir / "metrics.jsonl"
+    if not path.exists():
+        return {}
+    wanted = {
+        "model_precision_up_at_threshold",
+        "model_precision_down_at_threshold",
+        "model_brier_up_cal",
+        "model_brier_down_cal",
+    }
+    latest: dict[str, float] = {}
+    with path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            metric = row.get("metric")
+            if metric not in wanted:
+                continue
+            try:
+                latest[str(metric)] = float(row.get("value"))
+            except (TypeError, ValueError):
+                continue
+    return latest
+
 def build_system_report(storage: dict[str, str]) -> dict[str, Any]:
     logs_dir = _require_storage_key(storage, "logs_dir")
     datasets_dir = _require_storage_key(storage, "datasets_dir")
@@ -38,6 +66,7 @@ def build_system_report(storage: dict[str, str]) -> dict[str, Any]:
     data_root = raw_dir.parent
     health = check_health(data_root=data_root, max_age_sec=15 * 60)
     quality = build_quality_report(logs_dir / "signals.jsonl")
+    eval_metrics = _latest_eval_metrics(logs_dir)
     model_ready = _has_model_artifact(models_dir)
 
     backtest: dict[str, Any]
@@ -63,6 +92,7 @@ def build_system_report(storage: dict[str, str]) -> dict[str, Any]:
         "overall_reason": overall_reason,
         "health": {"ok": health.ok, "checks": health.checks},
         "quality": quality,
+        "model_eval": eval_metrics,
         "backtest": backtest,
         "backtest_ok": backtest_ok,
         "artifacts": {"model_ready": model_ready},
