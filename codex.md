@@ -1,6 +1,6 @@
 # CODEX Session Continuity Guide — Amber
 
-_Last updated: 2026-05-22_
+_Last updated: 2026-05-28_
 
 ## 1) Purpose of this file
 This file preserves operational context for new Codex sessions so development continuity is not lost.
@@ -36,6 +36,12 @@ High-level status:
 Recently completed hardening:
 - reporting artifact readiness flag (`artifacts.model_ready`),
 - WS normalization resilient JSONL parsing (skip bad lines + warning logs).
+
+Current external blockers (owner input required):
+- Real Bybit operation profile (`mainnet/testnet`, symbol list, stream scope).
+- Deployment target and runtime model (host/resources/supervision/storage).
+- Alert transport credentials (Telegram bot/chat config).
+- Product acceptance thresholds for promotion/risk gates.
 
 ---
 
@@ -112,3 +118,4 @@ python scripts/report.py
 - Keep architecture stable and evolve by small safe steps.
 - Prioritize roadmap items marked `[~]` before large new feature branches.
 - Any change in invariants must be reflected in `context.md` + `codex.md`.
+- If owner-provided blockers are unresolved, prefer internal robustness/observability work and document the dependency explicitly in session output.

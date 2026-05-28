@@ -33,3 +33,19 @@ From roadmap stages:
 ## 5. Recent updates (latest sessions)
 - `build_system_report` now includes artifact readiness (`artifacts.model_ready`).
 - WS normalization made resilient against malformed JSONL lines via streaming parser with warning logs instead of hard failure.
+
+## 6. External dependencies / owner-provided inputs (blocking)
+The following are required from the project owner to move beyond local-only hardening:
+
+1. **Real Bybit data operation inputs**
+   - Environment decision (`mainnet` vs `testnet`),
+   - symbol universe and stream set (`kline`, `ticker`, `OI`, `funding`),
+   - runtime limits/policies for collection.
+2. **Deployment environment**
+   - target host (VPS/cloud), resource budget, process supervisor model, persistent storage policy.
+3. **Alert transport credentials**
+   - Telegram token/chat settings for production notifications.
+4. **Business acceptance thresholds**
+   - promotion gates for model quality and risk filters (precision, spread, cooldown, concurrency caps).
+
+Without these inputs, Stage 1 real-ingestion closure and Stage 2/3 production-readiness gates remain partially blocked.

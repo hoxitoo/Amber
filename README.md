@@ -53,3 +53,17 @@ python scripts/run_tests.py
   - `model_eval_status`: `missing | stale | fresh`
   - `model_eval_reasons` / `overall_reasons` (structured diagnostics)
   - `readiness` (compact status snapshot for dashboards)
+
+## External blockers (required from project owner)
+Without the items below, development can continue only in local/synthetic mode and cannot fully close Stage 1/2 production criteria:
+
+1. **Bybit runtime data access (Stage 1 blocker)**
+   - Confirm `mainnet` vs `testnet`.
+   - Provide target symbol universe (ideally 20–50+).
+   - Confirm required streams (`kline`, `ticker`, `open interest`, `funding`).
+2. **Production runtime target**
+   - VPS/cloud host details (CPU/RAM/disk), process model (`systemd`/docker), and storage path policy.
+3. **Alert transport credentials**
+   - Telegram bot token and destination chat/channel IDs (when enabling prod alerts).
+4. **Product/risk acceptance thresholds**
+   - Required precision floors, spread/cooldown/concurrency limits, and model promotion gates.
