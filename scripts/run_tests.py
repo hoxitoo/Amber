@@ -1,5 +1,4 @@
 from pathlib import Path
-<<<<<<< HEAD
 import importlib.util
 import os
 import subprocess
@@ -21,12 +20,12 @@ def _ensure_dependencies() -> None:
     if not missing:
         return
 
-    auto_install = os.environ.get("AMBER_AUTO_INSTALL_DEPS", "1") == "1"
+    auto_install = os.environ.get("AMBER_AUTO_INSTALL_DEPS", "0") == "1"
     if not auto_install:
         raise SystemExit(
             "Missing dependencies: "
             + ", ".join(missing)
-            + ". Install with: python -m pip install -r requirements.txt"
+            + ". Install with: python -m pip install -r requirements.txt. Or set AMBER_AUTO_INSTALL_DEPS=1 to auto-install."
         )
 
     req = ROOT / "requirements.txt"
@@ -35,14 +34,6 @@ def _ensure_dependencies() -> None:
 
 if __name__ == "__main__":
     _ensure_dependencies()
-=======
-import sys
-import unittest
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-if __name__ == "__main__":
->>>>>>> origin/main
     suite = unittest.defaultTestLoader.discover("tests")
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     raise SystemExit(0 if result.wasSuccessful() else 1)

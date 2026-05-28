@@ -1,16 +1,12 @@
 from __future__ import annotations
 
-<<<<<<< HEAD
 from dataclasses import dataclass, field
 from time import time
 
-=======
->>>>>>> origin/main
 from amber.alerts.console import print_alert
 from amber.common.types import SignalV1
 
 
-<<<<<<< HEAD
 @dataclass(slots=True)
 class AlertRateLimiter:
     cooldown_sec: int = 0
@@ -34,11 +30,6 @@ def route_alert(signal: SignalV1, channels: list[str] | None = None, limiter: Al
     for ch in channels:
         if not limiter.allow(signal, ch):
             continue
-=======
-def route_alert(signal: SignalV1, channels: list[str] | None = None) -> None:
-    channels = channels or ["console"]
-    for ch in channels:
->>>>>>> origin/main
         if ch == "console":
             print_alert(signal)
         # telegram/discord channels are intentionally no-op placeholders for now.

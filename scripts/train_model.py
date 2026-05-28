@@ -17,14 +17,35 @@ if __name__ == "__main__":
     models_root = Path(config["storage"]["models_dir"])
     logs_root = Path(config["storage"]["logs_dir"])
 
-    tr = train_model(datasets_root=datasets_root, models_root=models_root)
+    cv_cfg = config.get("model", {}).get("cv", {}) if isinstance(config.get("model", {}), dict) else {}
+    cal_cfg = config.get("model", {}).get("calibration", {}) if isinstance(config.get("model", {}), dict) else {}
+    eval_cfg = config.get("model", {}).get("eval", {}) if isinstance(config.get("model", {}), dict) else {}
+    tr = train_model(
+        datasets_root=datasets_root,
+        models_root=models_root,
+        cv_n_folds=int(cv_cfg.get("n_folds", 3)),
+        cv_val_size=int(cv_cfg.get("val_size", 50)),
+        cv_gap_candles=int(cv_cfg.get("gap_candles", 30)),
+    )
     reg1 = register_model(models_root=models_root, model_run_id=tr["run_id"])
 
-    cal = calibrate_model(models_root=models_root, datasets_root=datasets_root)
+    cal = calibrate_model(
+        models_root=models_root,
+        datasets_root=datasets_root,
+        holdout_ratio=float(cal_cfg.get("holdout_ratio", 0.2)),
+    )
     reg2 = register_model(models_root=models_root, model_run_id=tr["run_id"], calibration_run_id=cal["run_id"])
 
-    ev = evaluate_model(models_root=models_root, datasets_root=datasets_root)
+    ev = evaluate_model(
+        models_root=models_root,
+        datasets_root=datasets_root,
+        threshold=float(eval_cfg.get("threshold", 0.7)),
+    )
     emit_metrics(logs_root, "model_precision_at_threshold", ev["precision_at_threshold"], {"model_run_id": tr["run_id"]})
+    emit_metrics(logs_root, "model_precision_up_at_threshold", ev["precision_up_at_threshold"], {"model_run_id": tr["run_id"]})
+    emit_metrics(logs_root, "model_precision_down_at_threshold", ev["precision_down_at_threshold"], {"model_run_id": tr["run_id"]})
     emit_metrics(logs_root, "model_brier", ev["brier"], {"model_run_id": tr["run_id"]})
+    emit_metrics(logs_root, "model_brier_up_cal", ev["brier_up_cal"], {"model_run_id": tr["run_id"]})
+    emit_metrics(logs_root, "model_brier_down_cal", ev["brier_down_cal"], {"model_run_id": tr["run_id"]})
 
     print({"train": tr, "register_pre_calib": reg1, "calibration": cal, "register_post_calib": reg2, "eval": ev})
