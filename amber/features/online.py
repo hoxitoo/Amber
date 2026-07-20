@@ -46,7 +46,11 @@ class FeatureEngine:
         w.bid.append(bid)
         w.ask.append(ask)
 
-        return self._build_features(symbol=symbol, ts=row["ts"])
+        return self._build_features(
+            symbol=symbol,
+            ts=row["ts"],
+            is_synthetic=bool(row.get("is_synthetic", False)),
+        )
 
     def latest(self, symbol: str) -> dict[str, Any] | None:
         if symbol not in self.state or not self.state[symbol].close:
@@ -59,7 +63,7 @@ class FeatureEngine:
             out.append(self.update(row))
         return out
 
-    def _build_features(self, symbol: str, ts: int) -> dict[str, Any]:
+    def _build_features(self, symbol: str, ts: int, is_synthetic: bool = False) -> dict[str, Any]:
         w = self.state[symbol]
 
         def _ret(n: int) -> float:
@@ -93,5 +97,7 @@ class FeatureEngine:
             "bid": w.bid[-1] if w.bid else mid_price,
             "ask": w.ask[-1] if w.ask else mid_price,
             "spread_bps": spread_bps,
+            "notional_volume_1m": (w.close[-1] * w.volume[-1]) if w.close and w.volume else 0.0,
+            "is_synthetic": is_synthetic,
             "obs": len(w.close),
         }

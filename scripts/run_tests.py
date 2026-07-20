@@ -8,7 +8,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-REQUIRED_IMPORTS = ("pydantic", "yaml", "sklearn", "websockets")
+REQUIRED_IMPORTS = ("pydantic", "yaml", "sklearn", "websockets", "httpx")
 
 
 def _missing_deps() -> list[str]:

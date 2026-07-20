@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
 import sys
 
@@ -21,10 +20,12 @@ async def main() -> None:
     ws_url = cfg["exchange"]["bybit"]["ws_url"]
     sink = ParquetSink(Path(cfg["storage"]["raw_dir"]))
 
-    topics = [f"kline.1.{s}" for s in symbols]
+    # Klines drive the candle series; tickers carry bid/ask, open interest and
+    # funding rate, which the normalizer merges into every candle row.
+    topics = [f"kline.1.{s}" for s in symbols] + [f"tickers.{s}" for s in symbols]
 
     async def handler(payload: dict) -> None:
-        # Keep raw payload for later normalizer stage.
+        # Keep raw payload for the later normalizer stage.
         topic = str(payload.get("topic", "unknown"))
         symbol = topic.split(".")[-1] if "." in topic else "unknown"
         sink.write_records(topic="ws_raw", symbol=symbol, records=[payload])

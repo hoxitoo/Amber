@@ -22,9 +22,9 @@ def main() -> None:
     state_root = Path(config["storage"]["state_dir"])
     symbols = config["exchange"]["bybit"]["symbols"]
 
-    result = compute_batch_features(raw_root=raw_root, out_root=out_root, symbols=symbols)
-
     state = StateStore(state_root)
+    result = compute_batch_features(raw_root=raw_root, out_root=out_root, symbols=symbols, state=state)
+
     state.set("features", {"run_id": run_id, **result})
 
     manifest = ArtifactManifest(
