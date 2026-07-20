@@ -25,8 +25,9 @@ def check_health(data_root: Path, max_age_sec: int = 3600) -> HealthReport:
         raise ValueError("max_age_sec must be positive")
     now = datetime.now(timezone.utc).timestamp()
 
-    raw_mtime = _latest_mtime(data_root / "raw", "ticks/*/part-000.jsonl")
-    feat_mtime = _latest_mtime(data_root / "features", "features/*/part-000.jsonl")
+    # `normalized` is the topic every collector/normalizer actually writes.
+    raw_mtime = _latest_mtime(data_root / "raw", "normalized/*/part-*.jsonl")
+    feat_mtime = _latest_mtime(data_root / "features", "features/*/part-*.jsonl")
     model_mtime = _latest_mtime(data_root / "models", "model_*/model.json")
 
     raw_age_sec = None if raw_mtime is None else now - raw_mtime

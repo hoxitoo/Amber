@@ -10,4 +10,11 @@ from amber.monitoring.quality_report import build_quality_report
 if __name__ == "__main__":
     cfg = ConfigLoader(Path.cwd()).load_yaml("config/amber.yaml")
     logs = Path(cfg["storage"]["logs_dir"]) / "signals.jsonl"
-    print(build_quality_report(logs))
+    print(
+        build_quality_report(
+            logs,
+            raw_root=Path(cfg["storage"]["raw_dir"]),
+            models_root=Path(cfg["storage"]["models_dir"]),
+            features_root=Path(cfg["storage"]["features_dir"]),
+        )
+    )

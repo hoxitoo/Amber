@@ -9,7 +9,7 @@ class TestHealth(unittest.TestCase):
     def test_check_health_reports_ages_and_ok(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            raw = root / "raw" / "ticks" / "BTCUSDT"
+            raw = root / "raw" / "normalized" / "BTCUSDT"
             feat = root / "features" / "features" / "BTCUSDT"
             model = root / "models" / "model_1"
             raw.mkdir(parents=True)

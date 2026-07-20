@@ -155,7 +155,12 @@ def build_system_report(
 
     data_root = raw_dir.parent
     health = check_health(data_root=data_root, max_age_sec=15 * 60)
-    quality = build_quality_report(logs_dir / "signals.jsonl")
+    quality = build_quality_report(
+        logs_dir / "signals.jsonl",
+        raw_root=raw_dir,
+        models_root=models_dir,
+        features_root=features_dir,
+    )
     eval_metrics, eval_metrics_age_sec = _latest_eval_metrics(logs_dir)
     eval_completeness = _model_eval_completeness(eval_metrics)
     required_eval_metrics = _model_eval_required_keys()
@@ -164,7 +169,12 @@ def build_system_report(
     backtest: dict[str, Any]
     backtest_ok = True
     try:
-        backtest = event_backtest(datasets_dir)
+        # Prefer the model-driven replay; fall back to the label replay when no
+        # trained model exists yet.
+        try:
+            backtest = event_backtest(datasets_dir, models_dir)
+        except Exception:
+            backtest = event_backtest(datasets_dir)
     except Exception as exc:  # pragma: no cover - safe runtime fallback
         backtest = {"error": str(exc)}
         backtest_ok = False

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from bisect import bisect_right
 import json
 import math
 from collections import deque
@@ -13,28 +14,65 @@ except Exception:  # pragma: no cover - fallback if sklearn unavailable
     roc_auc_score = None
 
 
-def detect_drift(features_root: Path, symbol: str, threshold: float = 0.05) -> dict[str, float | bool]:
-    path = features_root / "features" / symbol / "part-000.jsonl"
-    if not path.exists():
-        return {"drift": False, "delta_ret_mean": 0.0}
-
+def _read_feature_rows(features_root: Path, symbol: str) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    with path.open("r", encoding="utf-8") as fh:
-        for line in fh:
-            if not line.strip():
-                continue
-            try:
-                rows.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-    if len(rows) < 4:
-        return {"drift": False, "delta_ret_mean": 0.0}
+    for path in sorted((features_root / "features" / symbol).glob("part-*.jsonl")):
+        with path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                if not line.strip():
+                    continue
+                try:
+                    rows.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    return rows
 
-    mid = len(rows) // 2
-    m1 = sum(float(r.get("ret_1", 0.0)) for r in rows[:mid]) / max(1, mid)
-    m2 = sum(float(r.get("ret_1", 0.0)) for r in rows[mid:]) / max(1, len(rows) - mid)
-    delta = abs(m2 - m1)
-    return {"drift": delta > threshold, "delta_ret_mean": delta}
+
+def detect_drift(
+    features_root: Path,
+    symbol: str,
+    threshold: float = 0.2,
+    *,
+    reference: dict[str, list[float]] | None = None,
+    window: int = 500,
+) -> dict[str, Any]:
+    """Feature drift via PSI.
+
+    With a train `reference` (quantile edges per feature, stored in the model
+    artifact as `train_reference`), recent live values are compared against the
+    training distribution. Without one, it degrades to split-half PSI on `ret_1`.
+    Returns drift=True when max PSI exceeds `threshold` (0.1 warn / 0.2 alert
+    are the conventional PSI levels).
+    """
+    rows = _read_feature_rows(features_root, symbol)
+    ret_vals = [float(r.get("ret_1", 0.0)) for r in rows]
+    mid = len(ret_vals) // 2
+    delta_ret_mean = 0.0
+    if len(ret_vals) >= 4:
+        m1 = sum(ret_vals[:mid]) / max(1, mid)
+        m2 = sum(ret_vals[mid:]) / max(1, len(ret_vals) - mid)
+        delta_ret_mean = abs(m2 - m1)
+
+    per_feature: dict[str, float] = {}
+    if reference:
+        recent = rows[-window:]
+        for name, edges in reference.items():
+            live = [float(r.get(name, 0.0) or 0.0) for r in recent]
+            if len(live) >= 20:
+                per_feature[name] = psi_from_quantile_reference(edges, live)
+    elif len(ret_vals) >= 4:
+        per_feature["ret_1"] = psi(ret_vals[:mid], ret_vals[mid:])
+
+    max_psi = max(per_feature.values()) if per_feature else 0.0
+    level = "high" if max_psi > 0.2 else "medium" if max_psi > 0.1 else "low"
+    return {
+        "drift": max_psi > threshold,
+        "max_psi": max_psi,
+        "level": level,
+        "per_feature": per_feature,
+        "reference": "train_quantiles" if reference else "split_half",
+        "delta_ret_mean": delta_ret_mean,
+    }
 
 
 class RollingAUCMonitor:
@@ -94,6 +132,30 @@ def psi(expected: list[float], actual: list[float], bins: int = 10) -> float:
     e = hist(expected)
     a = hist(actual)
     return sum((av - ev) * math.log(av / ev) for ev, av in zip(e, a))
+
+
+def psi_from_quantile_reference(edges: list[float], live: list[float], eps: float = 1e-6) -> float:
+    """PSI of `live` against a train-set quantile grid.
+
+    `edges` are n_bins+1 quantile boundaries from the training data, so the
+    expected share per bin is uniform (1/n_bins). Live values outside the grid
+    are clipped into the edge bins.
+    """
+    n_bins = len(edges) - 1
+    if n_bins < 1 or not live:
+        return 0.0
+    counts = [0] * n_bins
+    for v in live:
+        idx = bisect_right(edges, v) - 1
+        idx = max(0, min(n_bins - 1, idx))
+        counts[idx] += 1
+    total = len(live)
+    expected = 1.0 / n_bins
+    out = 0.0
+    for c in counts:
+        actual = max(eps, c / total)
+        out += (actual - expected) * math.log(actual / expected)
+    return out
 
 
 def psi_monitor(reference: list[float], live: list[float]) -> dict[str, float | str]:
