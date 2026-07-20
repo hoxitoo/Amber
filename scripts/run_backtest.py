@@ -10,5 +10,10 @@ from amber.common.config import ConfigLoader
 
 if __name__ == "__main__":
     cfg = ConfigLoader(Path.cwd()).load_yaml("config/amber.yaml")
-    res = event_backtest(Path(cfg["storage"]["datasets_dir"]))
+    thresholds = ConfigLoader(Path.cwd()).load_yaml("config/thresholds.yaml")
+    res = event_backtest(
+        Path(cfg["storage"]["datasets_dir"]),
+        Path(cfg["storage"]["models_dir"]),
+        thresholds=thresholds["thresholds"],
+    )
     print(json.dumps(res, indent=2, sort_keys=True))

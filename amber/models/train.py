@@ -1,47 +1,19 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 from pathlib import Path
 from typing import Any
 
 from amber.common.manifest import ArtifactManifest, new_run_id, write_manifest
-from amber.models.split import make_walk_forward_folds
+from amber.models.dataset_io import load_latest_dataset_rows, order_with_pseudo_time, split_rows
+from amber.models.features import MODEL_FEATURES, feature_vector
+from amber.models.split import make_holdout_splits, make_time_walk_forward_folds
 
+logger = logging.getLogger(__name__)
 
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    with path.open("r", encoding="utf-8") as fh:
-        for line in fh:
-            rows.append(json.loads(line))
-    return rows
-
-
-def _fit_baseline(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    ret_vals = [float(r.get("ret_1", 0.0)) for r in rows]
-    vol_vals = [float(r.get("vol_z_20", 0.0)) for r in rows]
-    up_labels = [int(r.get("up_hit", 0)) for r in rows]
-    down_labels = [int(r.get("down_hit", 0)) for r in rows]
-
-    pump = {
-        "weights": {"ret_1": 8.0, "vol_z_20": 0.01},
-        "bias": -((sum(up_labels) / len(up_labels)) - 0.5),
-        "label_rate": sum(up_labels) / len(up_labels),
-    }
-    dump = {
-        "weights": {"ret_1": -8.0, "vol_z_20": 0.01},
-        "bias": -((sum(down_labels) / len(down_labels)) - 0.5),
-        "label_rate": sum(down_labels) / len(down_labels),
-    }
-
-    return {
-        "model_type": "baseline_dual_logistic_v2",
-        "features": ["ret_1", "vol_z_20"],
-        "heads": {"pump": pump, "dump": dump},
-        "train_rows": len(rows),
-        "ret_mean": sum(ret_vals) / len(ret_vals),
-        "vol_mean": sum(vol_vals) / len(vol_vals),
-    }
+_CLASS_EPS = 1e-4
 
 
 def _mean(xs: list[float]) -> float:
@@ -55,6 +27,102 @@ def _std(xs: list[float]) -> float:
     return math.sqrt(sum((x - m) ** 2 for x in xs) / len(xs))
 
 
+def _fit_head(x: list[list[float]], y: list[int]) -> dict[str, Any]:
+    """Fit one event head. LightGBM when available, logistic regression as
+    fallback, constant prior when the labels are single-class."""
+    pos = sum(y)
+    if pos == 0 or pos == len(y):
+        rate = pos / len(y) if y else 0.0
+        return {"type": "constant", "prob": min(1.0 - _CLASS_EPS, max(_CLASS_EPS, rate)), "label_rate": rate}
+
+    try:
+        import lightgbm as lgb
+        import numpy as np
+
+        params = {
+            "objective": "binary",
+            "metric": "binary_logloss",
+            "verbosity": -1,
+            "num_leaves": 15,
+            "learning_rate": 0.05,
+            "min_data_in_leaf": max(5, min(20, len(y) // 10)),
+            "feature_fraction": 1.0,
+            "seed": 42,
+        }
+        dataset = lgb.Dataset(np.asarray(x, dtype=float), label=np.asarray(y, dtype=float))
+        booster = lgb.train(params, dataset, num_boost_round=150)
+        return {
+            "type": "lightgbm",
+            "booster": booster.model_to_string(),
+            "label_rate": pos / len(y),
+        }
+    except ImportError:
+        from sklearn.linear_model import LogisticRegression
+
+        clf = LogisticRegression(max_iter=1000)
+        clf.fit(x, y)
+        weights = {name: float(w) for name, w in zip(MODEL_FEATURES, clf.coef_[0])}
+        return {
+            "type": "logreg",
+            "weights": weights,
+            "bias": float(clf.intercept_[0]),
+            "label_rate": pos / len(y),
+        }
+
+
+def _fit_dual(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    x = [feature_vector(r) for r in rows]
+    y_up = [int(r.get("up_hit", 0)) for r in rows]
+    y_down = [int(r.get("down_hit", 0)) for r in rows]
+    pump = _fit_head(x, y_up)
+    dump = _fit_head(x, y_down)
+    head_types = {pump["type"], dump["type"]}
+    if "lightgbm" in head_types:
+        model_type = "lightgbm_dual_v1"
+    elif "logreg" in head_types:
+        model_type = "logreg_dual_v1"
+    else:
+        model_type = "constant_dual_v1"
+    return {
+        "model_type": model_type,
+        "features": list(MODEL_FEATURES),
+        "heads": {"pump": pump, "dump": dump},
+        "train_rows": len(rows),
+    }
+
+
+def _predict_head(model: dict[str, Any], rows: list[dict[str, Any]], target: str) -> list[float]:
+    from amber.models.infer import infer_row_prob
+
+    return [infer_row_prob(model, r, target=target) for r in rows]
+
+
+def _safe_auc(y: list[int], probs: list[float]) -> float | None:
+    if len(set(y)) < 2:
+        return None
+    try:
+        from sklearn.metrics import roc_auc_score
+
+        return float(roc_auc_score(y, probs))
+    except Exception:
+        return None
+
+
+def _feature_quantiles(rows: list[dict[str, Any]], n_bins: int = 10) -> dict[str, list[float]]:
+    """Per-feature quantile edges over the train segment — the PSI reference
+    distribution used by the drift monitors."""
+    out: dict[str, list[float]] = {}
+    for name in MODEL_FEATURES:
+        values = sorted(float(r.get(name, 0.0) or 0.0) for r in rows)
+        if not values:
+            continue
+        edges = [values[min(len(values) - 1, int(len(values) * i / n_bins))] for i in range(n_bins + 1)]
+        edges[0] = values[0]
+        edges[-1] = values[-1]
+        out[name] = edges
+    return out
+
+
 def train_model(
     datasets_root: Path,
     models_root: Path,
@@ -62,34 +130,51 @@ def train_model(
     cv_n_folds: int = 3,
     cv_val_size: int = 50,
     cv_gap_candles: int = 30,
+    train_frac: float = 0.7,
+    calib_frac: float = 0.15,
 ) -> dict[str, Any]:
-    latest = sorted([p for p in datasets_root.iterdir() if p.is_dir() and p.name.startswith("dataset_")])[-1]
-    rows = _read_jsonl(latest / "dataset.jsonl")
-    if not rows:
+    all_rows, dataset_run = load_latest_dataset_rows(datasets_root)
+    if not all_rows:
         raise ValueError("Dataset is empty; run collectors/features/build_dataset first")
+
+    rows, pseudo_ts, split_mode = order_with_pseudo_time(all_rows)
 
     val_size = max(5, int(cv_val_size))
     gap = max(1, int(cv_gap_candles))
     n_folds = max(1, int(cv_n_folds))
-    folds = make_walk_forward_folds(len(rows), n_folds=n_folds, val_size=val_size, gap=gap)
+
+    splits = make_holdout_splits(pseudo_ts, train_frac=train_frac, calib_frac=calib_frac, gap=gap)
+    if splits is None:
+        logger.warning("dataset too small for train/calib/test holdout splits; training in-sample")
+        train_rows = rows
+        train_ts = pseudo_ts
+    else:
+        segments = split_rows(rows, pseudo_ts, splits)
+        train_rows = segments["train"]
+        train_ts = [t for t in pseudo_ts if t <= int(splits["train_end"])]
+
+    folds = make_time_walk_forward_folds(train_ts, n_folds=n_folds, val_size=val_size, gap=gap)
     fold_stats: list[dict[str, float]] = []
     skipped_folds = 0
     for fold in folds:
-        tr = rows[fold.train_start : fold.train_end]
-        va = rows[fold.val_start : fold.val_end]
+        tr = [r for r, t in zip(train_rows, train_ts) if t <= fold["train_end"]]
+        va = [r for r, t in zip(train_rows, train_ts) if fold["val_start"] <= t <= fold["val_end"]]
         if not tr or not va:
             skipped_folds += 1
             continue
-        m = _fit_baseline(tr)
-        wp = m["heads"]["pump"]["weights"]
-        bp = float(m["heads"]["pump"]["bias"])
-        probs = [1.0 / (1.0 + math.exp(-(wp["ret_1"] * float(r.get("ret_1", 0.0)) + wp["vol_z_20"] * float(r.get("vol_z_20", 0.0)) + bp))) for r in va]
+        m = _fit_dual(tr)
+        probs = _predict_head(m, va, target="pump")
         y = [int(r.get("up_hit", 0)) for r in va]
         brier = sum((p - yt) ** 2 for p, yt in zip(probs, y)) / len(y)
-        fold_stats.append({"val_rows": float(len(va)), "brier": float(brier)})
+        stat: dict[str, float] = {"val_rows": float(len(va)), "brier": float(brier)}
+        auc = _safe_auc(y, probs)
+        if auc is not None:
+            stat["auc"] = auc
+        fold_stats.append(stat)
 
-    model = _fit_baseline(rows)
+    model = _fit_dual(train_rows)
     brier_values = [float(fs["brier"]) for fs in fold_stats]
+    auc_values = [float(fs["auc"]) for fs in fold_stats if "auc" in fs]
     model["cv"] = {
         "n_folds": len(fold_stats),
         "configured_n_folds": n_folds,
@@ -99,7 +184,18 @@ def train_model(
         "gap_candles": gap,
         "brier_mean": _mean(brier_values),
         "brier_std": _std(brier_values),
+        "auc_mean": _mean(auc_values) if auc_values else None,
         "fold_stats": fold_stats,
+    }
+    model["split_mode"] = split_mode
+    model["splits"] = splits
+    model["train_reference"] = _feature_quantiles(train_rows)
+    horizons = sorted({int(r.get("horizon_steps", 0) or 0) for r in rows if r.get("horizon_steps")})
+    model["labeling"] = {
+        "horizon_steps": horizons[0] if horizons else 5,
+        "horizons": horizons,
+        "avg_up_pct": _mean([float(r.get("up_pct", 0.0) or 0.0) for r in rows]),
+        "avg_down_pct": _mean([float(r.get("down_pct", 0.0) or 0.0) for r in rows]),
     }
 
     run_id = new_run_id(prefix="model")
@@ -110,14 +206,17 @@ def train_model(
     manifest = ArtifactManifest(
         run_id=run_id,
         artifact_type="model",
-        artifact_version="v1",
-        created_at=latest.name,
+        artifact_version="v2",
+        created_at=dataset_run,
         config_ref="config/amber.yaml",
         feature_spec_ref="config/features.yaml",
         metadata={
-            "dataset_run": latest.name,
-            "train_rows": len(rows),
-            "formula": "sigmoid(w_ret*ret_1+w_vol*vol_z_20+b)",
+            "dataset_run": dataset_run,
+            "model_type": model["model_type"],
+            "train_rows": len(train_rows),
+            "total_rows": len(rows),
+            "split_mode": split_mode,
+            "has_holdout_splits": splits is not None,
             "cv_folds": len(fold_stats),
             "cv_generated_folds": len(folds),
             "cv_skipped_folds": skipped_folds,
@@ -128,14 +227,15 @@ def train_model(
     )
     write_manifest(out_dir / "manifest.json", manifest)
 
-    wp = model["heads"]["pump"]["weights"]
-    bp = model["heads"]["pump"]["bias"]
-    z = [wp["ret_1"] * float(r.get("ret_1", 0.0)) + wp["vol_z_20"] * float(r.get("vol_z_20", 0.0)) + bp for r in rows]
-    p = [1.0 / (1.0 + math.exp(-v)) for v in z]
+    avg_raw = _mean(_predict_head(model, rows, target="pump"))
     return {
         "run_id": run_id,
-        "train_rows": len(rows),
-        "avg_raw_prob": sum(p) / len(p),
+        "train_rows": len(train_rows),
+        "total_rows": len(rows),
+        "model_type": model["model_type"],
+        "split_mode": split_mode,
+        "has_holdout_splits": splits is not None,
+        "avg_raw_prob": avg_raw,
         "cv_folds": len(fold_stats),
         "cv_generated_folds": len(folds),
         "cv_skipped_folds": skipped_folds,

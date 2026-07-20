@@ -1,23 +1,35 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
 from amber.common.manifest import ArtifactManifest, new_run_id, write_manifest
-from amber.models.infer import infer_raw_prob, load_latest_model
+from amber.models.dataset_io import load_latest_dataset_rows, order_with_pseudo_time, split_rows
+from amber.models.infer import infer_row_prob, load_latest_model
 from amber.models.registry import latest_registered
 
+logger = logging.getLogger(__name__)
 
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    with path.open("r", encoding="utf-8") as fh:
-        for lineno, line in enumerate(fh, start=1):
-            try:
-                rows.append(json.loads(line))
-            except json.JSONDecodeError as exc:
-                raise ValueError(f"Invalid JSONL in {path} at line {lineno}: {exc.msg}") from exc
-    return rows
+
+def _select_holdout(
+    model: dict[str, Any],
+    rows: list[dict[str, Any]],
+    pseudo_ts: list[int],
+    holdout_ratio: float,
+) -> tuple[list[dict[str, Any]], str]:
+    """Prefer the model's dedicated calibration segment (out-of-sample for the
+    trained model); fall back to a tail slice for legacy/small datasets."""
+    splits = model.get("splits")
+    if isinstance(splits, dict):
+        holdout = split_rows(rows, pseudo_ts, splits)["calib"]
+        if holdout:
+            return holdout, "holdout_split"
+        logger.warning("model splits produced empty calibration segment; falling back to tail slice")
+    holdout_size = max(20, int(len(rows) * holdout_ratio))
+    holdout_size = min(holdout_size, len(rows))
+    return rows[-holdout_size:], "tail_in_sample"
 
 
 def calibrate_model(models_root: Path, datasets_root: Path, holdout_ratio: float = 0.2) -> dict[str, Any]:
@@ -25,24 +37,17 @@ def calibrate_model(models_root: Path, datasets_root: Path, holdout_ratio: float
     reg = latest_registered(models_root)
     model_run_id = reg["model_run_id"] if reg else "unregistered"
 
-    if not datasets_root.exists():
-        raise ValueError(f"No dataset_* directories found under: {datasets_root}")
-    candidates = sorted([p for p in datasets_root.iterdir() if p.is_dir() and p.name.startswith("dataset_")])
-    if not candidates:
-        raise ValueError(f"No dataset_* directories found under: {datasets_root}")
-    latest_ds = candidates[-1]
-    rows = _read_jsonl(latest_ds / "dataset.jsonl")
-    if not rows:
+    all_rows, dataset_run = load_latest_dataset_rows(datasets_root)
+    if not all_rows:
         raise ValueError("Dataset is empty; cannot calibrate")
     if holdout_ratio <= 0.0 or holdout_ratio >= 1.0:
         raise ValueError("holdout_ratio must be in (0, 1)")
 
-    holdout_size = max(20, int(len(rows) * holdout_ratio))
-    holdout_size = min(holdout_size, len(rows))
-    holdout = rows[-holdout_size:]
+    rows, pseudo_ts, _mode = order_with_pseudo_time(all_rows)
+    holdout, holdout_source = _select_holdout(model, rows, pseudo_ts, holdout_ratio)
 
     def _fit_head(target: str, label_key: str) -> dict[str, Any]:
-        raw = [infer_raw_prob(model, float(r.get("ret_1", 0.0)), float(r.get("vol_z_20", 0.0)), target=target) for r in holdout]
+        raw = [infer_row_prob(model, r, target=target) for r in holdout]
         y = [int(r.get(label_key, 0)) for r in holdout]
         try:
             from sklearn.isotonic import IsotonicRegression  # type: ignore
@@ -74,6 +79,7 @@ def calibrate_model(models_root: Path, datasets_root: Path, holdout_ratio: float
         "model_run_id": model_run_id,
         "rows": len(holdout),
         "holdout_ratio": holdout_ratio,
+        "holdout_source": holdout_source,
     }
 
     calib_run = new_run_id(prefix="calib")
@@ -84,12 +90,12 @@ def calibrate_model(models_root: Path, datasets_root: Path, holdout_ratio: float
     manifest = ArtifactManifest(
         run_id=calib_run,
         artifact_type="calibration",
-        artifact_version="v1",
-        created_at=latest_ds.name,
+        artifact_version="v2",
+        created_at=dataset_run,
         config_ref="config/amber.yaml",
         feature_spec_ref="config/features.yaml",
         metadata={
-            "dataset_run": latest_ds.name,
+            "dataset_run": dataset_run,
             "rows": len(holdout),
             "model_type": model.get("model_type"),
             "model_run_id": model_run_id,
@@ -97,7 +103,14 @@ def calibrate_model(models_root: Path, datasets_root: Path, holdout_ratio: float
             "pump_method": pump_cal["method"],
             "dump_method": dump_cal["method"],
             "holdout_ratio": holdout_ratio,
+            "holdout_source": holdout_source,
         },
     )
     write_manifest(out_dir / "manifest.json", manifest)
-    return {"run_id": calib_run, "method": payload["method"], "model_run_id": model_run_id, "holdout_rows": len(holdout)}
+    return {
+        "run_id": calib_run,
+        "method": payload["method"],
+        "model_run_id": model_run_id,
+        "holdout_rows": len(holdout),
+        "holdout_source": holdout_source,
+    }

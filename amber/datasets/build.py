@@ -95,10 +95,12 @@ def build_dataset(
     out_rows: list[dict[str, Any]] = []
 
     for symbol in symbols:
-        feat_file = features_root / "features" / symbol / "part-000.jsonl"
-        rows = _read_jsonl(feat_file)
+        rows: list[dict[str, Any]] = []
+        for feat_file in sorted((features_root / "features" / symbol).glob("part-*.jsonl")):
+            rows.extend(_read_jsonl(feat_file))
         if not rows:
             continue
+        rows.sort(key=lambda r: int(r.get("ts", 0) or 0))
 
         prices = [float(r.get("mid_price", 0.0)) for r in rows]
         ret_1_vals = [float(r.get("ret_1", 0.0)) for r in rows]
@@ -120,6 +122,11 @@ def build_dataset(
                 row_down = thr
 
             for horizon in horizons:
+                # Skip right-censored rows: without a full forward window the
+                # outcome is unknown, and labeling it "no event" biases the base
+                # rate downward.
+                if i + horizon >= len(prices):
+                    continue
                 future = prices[i : i + horizon + 1]
                 labels = label_event_path(future, up_pct=row_up, down_pct=row_down)
                 out_rows.append(
@@ -127,7 +134,13 @@ def build_dataset(
                         "symbol": symbol,
                         "ts": rows[i]["ts"],
                         "ret_1": rows[i].get("ret_1", 0.0),
+                        "ret_5": rows[i].get("ret_5", 0.0),
+                        "ret_20": rows[i].get("ret_20", 0.0),
                         "vol_z_20": rows[i].get("vol_z_20", 0.0),
+                        "oi_z_20": rows[i].get("oi_z_20", 0.0),
+                        "funding_z_20": rows[i].get("funding_z_20", 0.0),
+                        "spread_bps": rows[i].get("spread_bps", 0.0),
+                        "mid_price": rows[i].get("mid_price", 0.0),
                         "obs": rows[i].get("obs", 0),
                         "up_hit": labels["up_hit"],
                         "down_hit": labels["down_hit"],
@@ -138,6 +151,10 @@ def build_dataset(
                         "down_pct": row_down,
                     }
                 )
+
+    # Global chronological order so downstream walk-forward splits slice time,
+    # not symbol blocks.
+    out_rows.sort(key=lambda r: (int(r["ts"]), str(r["symbol"]), int(r["horizon_steps"])))
 
     dataset_dir = datasets_root / run_id
     _write_jsonl(dataset_dir / "dataset.jsonl", out_rows)

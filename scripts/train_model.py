@@ -17,15 +17,19 @@ if __name__ == "__main__":
     models_root = Path(config["storage"]["models_dir"])
     logs_root = Path(config["storage"]["logs_dir"])
 
-    cv_cfg = config.get("model", {}).get("cv", {}) if isinstance(config.get("model", {}), dict) else {}
-    cal_cfg = config.get("model", {}).get("calibration", {}) if isinstance(config.get("model", {}), dict) else {}
-    eval_cfg = config.get("model", {}).get("eval", {}) if isinstance(config.get("model", {}), dict) else {}
+    model_cfg = config.get("model", {}) if isinstance(config.get("model", {}), dict) else {}
+    cv_cfg = model_cfg.get("cv", {})
+    cal_cfg = model_cfg.get("calibration", {})
+    eval_cfg = model_cfg.get("eval", {})
+    split_cfg = model_cfg.get("split", {})
     tr = train_model(
         datasets_root=datasets_root,
         models_root=models_root,
         cv_n_folds=int(cv_cfg.get("n_folds", 3)),
         cv_val_size=int(cv_cfg.get("val_size", 50)),
         cv_gap_candles=int(cv_cfg.get("gap_candles", 30)),
+        train_frac=float(split_cfg.get("train_frac", 0.7)),
+        calib_frac=float(split_cfg.get("calib_frac", 0.15)),
     )
     reg1 = register_model(models_root=models_root, model_run_id=tr["run_id"])
 

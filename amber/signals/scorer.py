@@ -7,7 +7,7 @@ from typing import Any
 from uuid import uuid4
 
 from amber.common.types import SignalExplanation, SignalV1
-from amber.models.infer import infer_raw_prob, load_latest_model
+from amber.models.infer import feature_contributions, infer_row_prob, load_latest_model
 
 
 def _load_latest_calibration(models_root: Path) -> dict[str, Any]:
@@ -58,66 +58,63 @@ def calibrated_prob_for_target(raw: float, calibration: dict[str, Any], target: 
 
 
 
-def _head_weights(model: dict[str, Any], target: str) -> dict[str, float]:
-    heads = model.get("heads", {})
-    if isinstance(heads, dict) and target in heads:
-        w = heads[target].get("weights", {})
-        return {"ret_1": float(w.get("ret_1", 0.0)), "vol_z_20": float(w.get("vol_z_20", 0.0))}
-    w = model.get("weights", {})
-    return {"ret_1": float(w.get("ret_1", 0.0)), "vol_z_20": float(w.get("vol_z_20", 0.0))}
-
-
-def _top_shap_like_impacts(
-    pump_w: dict[str, float],
-    dump_w: dict[str, float],
-    ret_1: float,
-    vol_z_20: float,
+def _top_impacts(
+    model: dict[str, Any],
+    feature_row: dict[str, Any],
     top_n: int = 3,
 ) -> list[dict[str, float]]:
-    contributions = {
-        "pump_ret_1": pump_w["ret_1"] * ret_1,
-        "pump_vol_z_20": pump_w["vol_z_20"] * vol_z_20,
-        "dump_ret_1": dump_w["ret_1"] * ret_1,
-        "dump_vol_z_20": dump_w["vol_z_20"] * vol_z_20,
-    }
+    contributions: dict[str, float] = {}
+    for prefix, target in (("pump", "pump"), ("dump", "dump")):
+        for name, value in feature_contributions(model, feature_row, target=target).items():
+            contributions[f"{prefix}_{name}"] = float(value)
     ordered = sorted(contributions.items(), key=lambda kv: abs(kv[1]), reverse=True)
     return [{name: float(value)} for name, value in ordered[: max(1, top_n)]]
 
 
-def score_signal(feature_row: dict[str, Any], models_root: Path, config_version: str = "v1") -> SignalV1:
-    model = load_latest_model(models_root)
-    calib = _load_latest_calibration(models_root)
+def score_signal(
+    feature_row: dict[str, Any],
+    models_root: Path,
+    config_version: str = "v1",
+    *,
+    model: dict[str, Any] | None = None,
+    calibration: dict[str, Any] | None = None,
+) -> SignalV1:
+    """Score one feature row. `model`/`calibration` can be preloaded once by the
+    caller (e.g. the scanner loop) to avoid re-reading artifacts per symbol."""
+    if model is None:
+        model = load_latest_model(models_root)
+    calib = calibration if calibration is not None else _load_latest_calibration(models_root)
 
-    ret_1 = float(feature_row.get("ret_1", 0.0))
-    vol_z_20 = float(feature_row.get("vol_z_20", 0.0))
-
-    up_raw = infer_raw_prob(model, ret_1=ret_1, vol_z_20=vol_z_20, target="pump")
-    down_raw = infer_raw_prob(model, ret_1=ret_1, vol_z_20=vol_z_20, target="dump")
+    up_raw = infer_row_prob(model, feature_row, target="pump")
+    down_raw = infer_row_prob(model, feature_row, target="dump")
 
     up_cal = calibrated_prob_for_target(up_raw, calibration=calib, target="pump")
     down_cal = calibrated_prob_for_target(down_raw, calibration=calib, target="dump")
 
-    pump_w = _head_weights(model, target="pump")
-    dump_w = _head_weights(model, target="dump")
     directional = up_cal - down_cal
 
+    explanation_method = (
+        "shap_pred_contrib_top3" if model.get("model_type", "").startswith("lightgbm") else "shap_like_linear_contrib_top3"
+    )
     explanation = SignalExplanation(
-        top_feature_impacts=_top_shap_like_impacts(pump_w, dump_w, ret_1=ret_1, vol_z_20=vol_z_20, top_n=3),
+        top_feature_impacts=_top_impacts(model, feature_row, top_n=3),
         rule_trace=[
             {"rule": "model_inference", "passed": True},
             {"rule": "calibration_applied", "passed": True, "method": calib.get("method", "identity")},
-            {"rule": "explanation_method", "value": "shap_like_linear_contrib_top3"},
+            {"rule": "explanation_method", "value": explanation_method},
             {"rule": "directional_score", "value": directional},
         ],
     )
 
+    # Signal metadata reflects what the model was actually trained to predict.
+    labeling = model.get("labeling", {}) if isinstance(model.get("labeling"), dict) else {}
     return SignalV1(
         signal_id=f"sig_{uuid4().hex[:12]}",
         event_ts=feature_row["ts"],
         symbol=feature_row["symbol"],
-        horizon_min=5,
-        target_up_pct=0.2,
-        target_down_pct=0.2,
+        horizon_min=int(labeling.get("horizon_steps", 5)),
+        target_up_pct=float(labeling.get("avg_up_pct", 0.002)),
+        target_down_pct=float(labeling.get("avg_down_pct", 0.002)),
         prob_up_raw=up_raw,
         prob_down_raw=down_raw,
         prob_up_calibrated=up_cal,

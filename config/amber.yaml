@@ -43,6 +43,9 @@ model:
     n_folds: 3
     val_size: 50
     gap_candles: 30
+  split:
+    train_frac: 0.7
+    calib_frac: 0.15
   calibration:
     holdout_ratio: 0.2
   eval:

@@ -1,22 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
-from amber.models.infer import infer_raw_prob, load_latest_model
+from amber.models.dataset_io import load_latest_dataset_rows, order_with_pseudo_time, split_rows
+from amber.models.infer import infer_row_prob, load_latest_model
 from amber.signals.scorer import calibrated_prob_for_target
 
-
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    with path.open("r", encoding="utf-8") as fh:
-        for lineno, line in enumerate(fh, start=1):
-            try:
-                rows.append(json.loads(line))
-            except json.JSONDecodeError as exc:
-                raise ValueError(f"Invalid JSONL in {path} at line {lineno}: {exc.msg}") from exc
-    return rows
+logger = logging.getLogger(__name__)
 
 
 def _load_latest_calibration(models_root: Path) -> dict[str, Any]:
@@ -29,23 +22,42 @@ def _load_latest_calibration(models_root: Path) -> dict[str, Any]:
         return {"method": "identity"}
 
 
+def _safe_auc(y: list[int], probs: list[float]) -> float | None:
+    if len(set(y)) < 2:
+        return None
+    try:
+        from sklearn.metrics import roc_auc_score
+
+        return float(roc_auc_score(y, probs))
+    except Exception:
+        return None
+
+
 def evaluate_model(models_root: Path, datasets_root: Path, threshold: float = 0.7) -> dict[str, float]:
     if threshold < 0.0 or threshold > 1.0:
         raise ValueError("threshold must be in [0, 1]")
     model = load_latest_model(models_root)
     calibration = _load_latest_calibration(models_root)
-    if not datasets_root.exists():
-        raise ValueError(f"No dataset_* directories found under: {datasets_root}")
-    candidates = sorted([p for p in datasets_root.iterdir() if p.is_dir() and p.name.startswith("dataset_")])
-    if not candidates:
-        raise ValueError(f"No dataset_* directories found under: {datasets_root}")
-    latest_ds = candidates[-1]
-    rows = _read_jsonl(latest_ds / "dataset.jsonl")
-    if not rows:
+    all_rows, _dataset_run = load_latest_dataset_rows(datasets_root)
+    if not all_rows:
         raise ValueError("Dataset is empty; cannot evaluate")
 
-    probs_up_raw = [infer_raw_prob(model, float(r.get("ret_1", 0.0)), float(r.get("vol_z_20", 0.0)), target="pump") for r in rows]
-    probs_down_raw = [infer_raw_prob(model, float(r.get("ret_1", 0.0)), float(r.get("vol_z_20", 0.0)), target="dump") for r in rows]
+    ordered, pseudo_ts, _mode = order_with_pseudo_time(all_rows)
+    splits = model.get("splits")
+    in_sample = True
+    rows = ordered
+    if isinstance(splits, dict):
+        test_rows = split_rows(ordered, pseudo_ts, splits)["test"]
+        if test_rows:
+            rows = test_rows
+            in_sample = False
+        else:
+            logger.warning("model splits produced empty test segment; evaluating in-sample")
+    else:
+        logger.warning("model has no holdout splits; evaluation metrics are in-sample")
+
+    probs_up_raw = [infer_row_prob(model, r, target="pump") for r in rows]
+    probs_down_raw = [infer_row_prob(model, r, target="dump") for r in rows]
     probs_up_cal = [calibrated_prob_for_target(p, calibration, target="pump") for p in probs_up_raw]
     probs_down_cal = [calibrated_prob_for_target(p, calibration, target="dump") for p in probs_down_raw]
 
@@ -65,8 +77,10 @@ def evaluate_model(models_root: Path, datasets_root: Path, threshold: float = 0.
     brier_down_cal = sum((p - yt) ** 2 for p, yt in zip(probs_down_cal, y_down)) / len(y_down)
     brier = 0.5 * (brier_up_cal + brier_down_cal)
 
-    return {
+    out: dict[str, float] = {
         "rows": float(len(y_up)),
+        "rows_total": float(len(ordered)),
+        "in_sample": 1.0 if in_sample else 0.0,
         "precision_at_threshold": precision_up,
         "precision_up_at_threshold": precision_up,
         "precision_down_at_threshold": precision_down,
@@ -75,5 +89,14 @@ def evaluate_model(models_root: Path, datasets_root: Path, threshold: float = 0.
         "avg_prob_down": sum(probs_down_cal) / len(probs_down_cal),
         "brier_up_cal": brier_up_cal,
         "brier_down_cal": brier_down_cal,
-        "calibration_method": str(calibration.get("method", "identity")),
+        "base_rate_up": sum(y_up) / len(y_up),
+        "base_rate_down": sum(y_down) / len(y_down),
+        "calibration_method": str(calibration.get("method", "identity")),  # type: ignore[dict-item]
     }
+    auc_up = _safe_auc(y_up, probs_up_cal)
+    if auc_up is not None:
+        out["auc_up_cal"] = auc_up
+    auc_down = _safe_auc(y_down, probs_down_cal)
+    if auc_down is not None:
+        out["auc_down_cal"] = auc_down
+    return out
