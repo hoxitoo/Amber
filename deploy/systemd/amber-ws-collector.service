@@ -1,0 +1,16 @@
+[Unit]
+Description=Amber Bybit WS collector (kline + tickers raw ingestion)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=amber
+WorkingDirectory=/opt/amber
+ExecStart=/opt/amber/.venv/bin/python scripts/run_ws_collector.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,38 @@
+services:
+  ws-collector:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: python scripts/run_ws_collector.py
+    restart: unless-stopped
+    volumes:
+      - amber-data:/app/data
+
+  scanner:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: python scripts/run_scanner.py --loop
+    restart: unless-stopped
+    environment:
+      - AMBER_TG_TOKEN=${AMBER_TG_TOKEN:-}
+      - AMBER_TG_CHAT=${AMBER_TG_CHAT:-}
+    volumes:
+      - amber-data:/app/data
+
+  normalize-features:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: >
+      sh -c 'while true; do
+        python scripts/run_normalize.py &&
+        python scripts/run_features.py;
+        sleep 60;
+      done'
+    restart: unless-stopped
+    volumes:
+      - amber-data:/app/data
+
+volumes:
+  amber-data:

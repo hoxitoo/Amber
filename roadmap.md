@@ -5,32 +5,37 @@
 - [x] Basic collector/features/dataset/model/scanner flow.
 - [x] Signal schema contract (`SignalV1`) and manifests.
 - [x] Health/metrics/drift initial monitoring primitives.
-- [~] Replace stub data ingestion with real Bybit WS/REST client (`kline/ticker/OI/funding`).
+- [x] Real Bybit WS/REST client (`kline` + `tickers` incl. OI/funding; REST backfill).
 - [x] Implement `NormalizedRow` + strict validation (Pydantic v2).
-- [~] Add gap-fill and `is_synthetic` handling in IO.
-- [x] Introduce unified FeatureEngine (offline/live parity).
+- [x] Gap-fill and `is_synthetic` handling in IO (excluded from training and signaling).
+- [x] Unified FeatureEngine (offline/live parity).
+- [x] Idempotent ingestion (offsets + watermarks; safe re-runs).
 
 ## Stage 2 — Modeling correctness and trust
-- [ ] Move to LightGBM pump/dump dual-model setup.
-- [ ] Adaptive threshold labeling with rolling volatility and multi-horizon support.
-- [~] Walk-forward CV with explicit `gap_candles=30` across folds.
-- [~] Isotonic calibration on holdout split.
-- [ ] SHAP top-features in signal explanation.
-- [x] Directional score + spread/cooldown/concurrency risk filters.
+- [x] LightGBM pump/dump dual-model setup (logreg fallback).
+- [x] Adaptive threshold labeling with rolling volatility and multi-horizon support.
+- [x] Walk-forward CV with purge gap in time (candles), not row indices.
+- [x] Isotonic calibration on a dedicated holdout split.
+- [x] SHAP top-features in signal explanation (LightGBM `pred_contrib`).
+- [x] Directional score + spread/cooldown/concurrency risk filters (persistent).
 
 ## Stage 3 — Monitoring and strategy validation
-- [~] Rolling AUC monitor over latest confirmed events.
-- [~] PSI monitor per key feature with alert thresholds.
-- [~] Prediction bias monitor (`mean P(pump)` vs outcomes).
-- [~] Event-based backtest with slippage/commission and TP/SL/timeout outcomes.
+- [x] Rolling AUC monitor over latest **confirmed** events (real outcome join).
+- [x] PSI monitor per key feature vs train reference with alert thresholds.
+- [x] Prediction bias monitor (`mean P(pump)` vs `mean P(dump)`).
+- [x] Event-based backtest with slippage/commission, model-driven on the test split.
+- [ ] 24h+ soak on live mainnet data (needs deployment; see below).
 
 ## Stage 4 — Production readiness
-- [ ] Telegram transport and rate limiting.
-- [ ] Better universe selection (top-K + anomalies + liquidity constraints).
-- [ ] Runtime supervision/recovery for separate processes.
-- [ ] Packaging/deployment profile for VPS/cloud.
+- [x] Telegram transport and rate limiting (env-based credentials).
+- [x] Better universe selection (top-K + liquidity floor via `notional_volume_1m`).
+- [x] Runtime supervision profile (systemd units / docker-compose in `deploy/`).
+- [x] Packaging/deployment docs for VPS.
+- [ ] Live go-live: owner provides VPS, symbol universe, Telegram credentials,
+      and acceptance thresholds; then run the 24h soak and promotion gate.
 
-## Stage 5 — Productization
+## Stage 5 — Productization (next iteration)
 - [ ] API and dashboard.
-- [ ] model registry rollback workflow.
+- [ ] Model registry rollback workflow.
 - [ ] SaaS-facing observability + tenant-safe isolation.
+- [ ] Parquet storage backend with date partitioning.

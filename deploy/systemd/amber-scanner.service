@@ -1,0 +1,18 @@
+[Unit]
+Description=Amber scanner loop (scoring, filters, alerts)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=amber
+WorkingDirectory=/opt/amber
+ExecStart=/opt/amber/.venv/bin/python scripts/run_scanner.py --loop
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+# Telegram credentials (optional): keep them in a root-owned env file.
+EnvironmentFile=-/etc/amber/alerts.env
+
+[Install]
+WantedBy=multi-user.target

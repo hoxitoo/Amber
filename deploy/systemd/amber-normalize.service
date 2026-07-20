@@ -1,0 +1,9 @@
+[Unit]
+Description=Amber normalize stage (one incremental pass)
+
+[Service]
+Type=oneshot
+User=amber
+WorkingDirectory=/opt/amber
+ExecStart=/opt/amber/.venv/bin/python scripts/run_normalize.py
+Environment=PYTHONUNBUFFERED=1

@@ -1,0 +1,13 @@
+[Unit]
+Description=Amber daily retrain: dataset -> train/calibrate/eval -> backtest gate
+
+[Service]
+Type=oneshot
+User=amber
+WorkingDirectory=/opt/amber
+ExecStart=/bin/sh -c '\
+  /opt/amber/.venv/bin/python scripts/run_features.py && \
+  /opt/amber/.venv/bin/python scripts/build_dataset.py && \
+  /opt/amber/.venv/bin/python scripts/train_model.py && \
+  /opt/amber/.venv/bin/python scripts/run_backtest.py'
+Environment=PYTHONUNBUFFERED=1
