@@ -23,9 +23,14 @@ exchange:
 signal:
   schema_version: v1
   top_k_universe: 20
+  min_dollar_volume: 0.0
+scanner:
+  interval_sec: 60
 alerts:
   channels:
   - console
+  # 'telegram' needs AMBER_TG_TOKEN / AMBER_TG_CHAT env vars;
+  # 'discord' needs AMBER_DISCORD_WEBHOOK.
 
 labeling:
   horizon_steps: 5

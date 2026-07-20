@@ -12,8 +12,10 @@ def select_universe(
 ) -> list[str]:
     """Select symbols by latest volume z-score with minimum data/liquidity guards."""
     scores: list[tuple[str, float]] = []
-    for f in sorted((features_root / "features").glob("*/part-000.jsonl")):
-        symbol = f.parent.name
+    by_symbol: dict[str, Path] = {}
+    for f in sorted((features_root / "features").glob("*/part-*.jsonl")):
+        by_symbol[f.parent.name] = f
+    for symbol, f in sorted(by_symbol.items()):
         lines = []
         for line in f.read_text(encoding="utf-8").splitlines():
             if not line.strip():

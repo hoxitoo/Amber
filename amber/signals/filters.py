@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import logging
 from time import time
 
 from amber.common.types import SignalV1
+from amber.storage.state_store import StateStore
+
+logger = logging.getLogger(__name__)
 
 
 def directional_score(signal: SignalV1) -> float:
@@ -20,20 +23,48 @@ def spread_bps(signal: SignalV1) -> float:
     return ((ask - bid) / mid) * 10_000
 
 
-@dataclass(slots=True)
 class SignalGate:
-    cooldown_sec: int
-    concurrent_limit: int
-    last_emit_ts: dict[str, float] = field(default_factory=dict)
+    """Per-symbol cooldown plus a cap on concurrently active symbols.
+
+    A symbol's slot expires after `slot_ttl_sec` (roughly the signal horizon),
+    so the concurrency cap limits *active* signals instead of permanently
+    blocking every new symbol after the first N. With a `store`, state survives
+    across scanner invocations.
+    """
+
+    def __init__(
+        self,
+        cooldown_sec: int,
+        concurrent_limit: int,
+        *,
+        slot_ttl_sec: int | None = None,
+        store: StateStore | None = None,
+        state_key: str = "signal_gate",
+    ) -> None:
+        self.cooldown_sec = cooldown_sec
+        self.concurrent_limit = concurrent_limit
+        self.slot_ttl_sec = slot_ttl_sec if slot_ttl_sec is not None else max(cooldown_sec, 60) * 5
+        self.store = store
+        self.state_key = state_key
+        self.last_emit_ts: dict[str, float] = {}
+        if store is not None:
+            try:
+                self.last_emit_ts = {k: float(v) for k, v in store.get(state_key).items()}
+            except Exception:
+                logger.warning("could not load signal gate state key=%s; starting fresh", state_key)
 
     def allow(self, signal: SignalV1) -> bool:
-        if len(self.last_emit_ts) >= self.concurrent_limit and signal.symbol not in self.last_emit_ts:
-            return False
         now = time()
+        active = {s: t for s, t in self.last_emit_ts.items() if (now - t) < self.slot_ttl_sec}
+        if len(active) >= self.concurrent_limit and signal.symbol not in active:
+            return False
         last = self.last_emit_ts.get(signal.symbol)
         if last is not None and (now - last) < self.cooldown_sec:
             return False
-        self.last_emit_ts[signal.symbol] = now
+        active[signal.symbol] = now
+        self.last_emit_ts = active
+        if self.store is not None:
+            self.store.set(self.state_key, self.last_emit_ts)
         return True
 
 
