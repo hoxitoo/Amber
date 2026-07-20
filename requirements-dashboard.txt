@@ -1,0 +1,5 @@
+# Optional dashboard dependencies (not needed for the core pipeline).
+# Install with: pip install -r requirements-dashboard.txt
+streamlit>=1.37,<2.0
+plotly>=5.22,<6.0
+pandas>=2.0,<3.0

@@ -39,6 +39,17 @@ python scripts/quality_check.py   # confirmed-outcome AUC, bias, PSI
 python scripts/report.py          # overall_ok gate for dashboards/uptime checks
 ```
 
+## Dashboard (UI)
+A read-only Streamlit dashboard shows system status, live signals, model quality,
+data/drift and per-symbol charts.
+```bash
+pip install -r requirements-dashboard.txt
+streamlit run amber/dashboard/app.py        # or: python scripts/run_dashboard.py
+```
+Opens in the browser at `http://localhost:8501`. Run it from the project root so
+it can find `config/` and `data/`. It degrades gracefully before you have data or
+a trained model.
+
 ## Alerts
 Set credentials via environment (never in config/code):
 - Telegram: `AMBER_TG_TOKEN`, `AMBER_TG_CHAT`, then add `telegram` to `alerts.channels` in `config/amber.yaml`.
