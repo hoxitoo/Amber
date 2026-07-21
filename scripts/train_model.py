@@ -51,5 +51,8 @@ if __name__ == "__main__":
     emit_metrics(logs_root, "model_brier", ev["brier"], {"model_run_id": tr["run_id"]})
     emit_metrics(logs_root, "model_brier_up_cal", ev["brier_up_cal"], {"model_run_id": tr["run_id"]})
     emit_metrics(logs_root, "model_brier_down_cal", ev["brier_down_cal"], {"model_run_id": tr["run_id"]})
+    for key in ("pr_auc_up_cal", "pr_auc_down_cal", "pr_auc_up_lift", "pr_auc_down_lift"):
+        if key in ev:
+            emit_metrics(logs_root, f"model_{key}", ev[key], {"model_run_id": tr["run_id"]})
 
     print({"train": tr, "register_pre_calib": reg1, "calibration": cal, "register_post_calib": reg2, "eval": ev})

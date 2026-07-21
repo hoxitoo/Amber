@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 
 from amber.common.config import ConfigLoader
+from amber.common.locks import AlreadyRunning, SingleInstanceLock
 from amber.common.logging import setup_logging
 from amber.common.manifest import ArtifactManifest, new_run_id, write_manifest
 from amber.features.compute import compute_batch_features
@@ -22,23 +23,25 @@ def main() -> None:
     state_root = Path(config["storage"]["state_dir"])
     symbols = config["exchange"]["bybit"]["symbols"]
 
-    state = StateStore(state_root)
-    result = compute_batch_features(raw_root=raw_root, out_root=out_root, symbols=symbols, state=state)
+    try:
+        with SingleInstanceLock(state_root / "locks", "features"):
+            state = StateStore(state_root)
+            result = compute_batch_features(raw_root=raw_root, out_root=out_root, symbols=symbols, state=state)
+            state.set("features", {"run_id": run_id, **result})
 
-    state.set("features", {"run_id": run_id, **result})
-
-    manifest = ArtifactManifest(
-        run_id=run_id,
-        artifact_type="features_run",
-        artifact_version="v1",
-        created_at=run_id.split("_")[1],
-        config_ref="config/amber.yaml",
-        feature_spec_ref="config/features.yaml",
-        metadata={"symbols": symbols, **result},
-    )
-    write_manifest(out_root / "manifests" / run_id / "manifest.json", manifest)
-
-    logger.info("features finished run_id=%s written_rows=%s", run_id, result["written_rows"])
+            manifest = ArtifactManifest(
+                run_id=run_id,
+                artifact_type="features_run",
+                artifact_version="v1",
+                created_at=run_id.split("_")[1],
+                config_ref="config/amber.yaml",
+                feature_spec_ref="config/features.yaml",
+                metadata={"symbols": symbols, **result},
+            )
+            write_manifest(out_root / "manifests" / run_id / "manifest.json", manifest)
+            logger.info("features finished run_id=%s written_rows=%s", run_id, result["written_rows"])
+    except AlreadyRunning:
+        logger.warning("features already running; skipping this run")
 
 
 if __name__ == "__main__":

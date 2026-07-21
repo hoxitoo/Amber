@@ -33,6 +33,32 @@ def _safe_auc(y: list[int], probs: list[float]) -> float | None:
         return None
 
 
+def _safe_pr_auc(y: list[int], probs: list[float]) -> float | None:
+    """Average precision (PR-AUC) — the honest headline for rare events."""
+    if len(set(y)) < 2:
+        return None
+    try:
+        from sklearn.metrics import average_precision_score
+
+        return float(average_precision_score(y, probs))
+    except Exception:
+        return None
+
+
+def _reliability_curve(y: list[int], probs: list[float], bins: int = 10) -> list[dict[str, float]]:
+    """Binned calibration: mean predicted prob vs observed frequency per bin."""
+    buckets: list[dict[str, float]] = []
+    for b in range(bins):
+        lo, hi = b / bins, (b + 1) / bins
+        idx = [i for i, p in enumerate(probs) if (p >= lo and (p < hi or (b == bins - 1 and p <= hi)))]
+        if not idx:
+            continue
+        pred = sum(probs[i] for i in idx) / len(idx)
+        obs = sum(y[i] for i in idx) / len(idx)
+        buckets.append({"bin": b, "n": len(idx), "mean_pred": pred, "observed": obs})
+    return buckets
+
+
 def evaluate_model(models_root: Path, datasets_root: Path, threshold: float = 0.7) -> dict[str, float]:
     if threshold < 0.0 or threshold > 1.0:
         raise ValueError("threshold must be in [0, 1]")
@@ -99,4 +125,35 @@ def evaluate_model(models_root: Path, datasets_root: Path, threshold: float = 0.
     auc_down = _safe_auc(y_down, probs_down_cal)
     if auc_down is not None:
         out["auc_down_cal"] = auc_down
+
+    # PR-AUC / average precision — headline metric under class imbalance.
+    pr_up = _safe_pr_auc(y_up, probs_up_cal)
+    if pr_up is not None:
+        out["pr_auc_up_cal"] = pr_up
+    pr_down = _safe_pr_auc(y_down, probs_down_cal)
+    if pr_down is not None:
+        out["pr_auc_down_cal"] = pr_down
+    # PR-AUC lift over the base rate (>1 means better than always-predict-positive).
+    if pr_up is not None and out["base_rate_up"] > 0:
+        out["pr_auc_up_lift"] = pr_up / out["base_rate_up"]
+    if pr_down is not None and out["base_rate_down"] > 0:
+        out["pr_auc_down_lift"] = pr_down / out["base_rate_down"]
     return out
+
+
+def evaluate_model_verbose(models_root: Path, datasets_root: Path, threshold: float = 0.7) -> dict[str, Any]:
+    """Scalar metrics plus the reliability (calibration) curves for dashboards."""
+    metrics = evaluate_model(models_root, datasets_root, threshold=threshold)
+    model = load_latest_model(models_root)
+    calibration = _load_latest_calibration(models_root)
+    all_rows, _ = load_latest_dataset_rows(datasets_root)
+    ordered, pseudo_ts, _mode = order_with_pseudo_time(all_rows)
+    splits = model.get("splits")
+    rows = ordered
+    if isinstance(splits, dict):
+        test_rows = split_rows(ordered, pseudo_ts, splits)["test"]
+        if test_rows:
+            rows = test_rows
+    p_up = [calibrated_prob_for_target(infer_row_prob(model, r, target="pump"), calibration, target="pump") for r in rows]
+    y_up = [int(r.get("up_hit", 0)) for r in rows]
+    return {**metrics, "reliability_up": _reliability_curve(y_up, p_up)}

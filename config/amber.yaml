@@ -42,6 +42,8 @@ labeling:
   threshold_vol_window: 60
   threshold_floor: 0.003
   threshold_cap: 0.05
+  # drop warm-up rows whose long-lookback features are still degenerate
+  min_warmup_bars: 60
 
 model:
   cv:

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from amber.common.config import ConfigLoader
+from amber.common.locks import AlreadyRunning, SingleInstanceLock
 from amber.common.logging import setup_logging
 from amber.exchange.normalizer import BybitNormalizer, gap_fill, step_ms_for_tf
 from amber.storage.parquet_sink import ParquetSink
@@ -110,10 +111,15 @@ def main() -> None:
     cfg = ConfigLoader(Path.cwd()).load_yaml("config/amber.yaml")
     setup_logging(cfg.get("run", {}).get("log_level", "INFO"))
 
+    state_root = Path(cfg["storage"]["state_dir"])
     raw_root = Path(cfg["storage"]["raw_dir"])
-    state = StateStore(Path(cfg["storage"]["state_dir"]))
-    written = normalize_ws_raw(raw_root, state)
-    logger.info("normalize_app finished written=%s", written)
+    try:
+        with SingleInstanceLock(state_root / "locks", "normalize"):
+            state = StateStore(state_root)
+            written = normalize_ws_raw(raw_root, state)
+            logger.info("normalize_app finished written=%s", written)
+    except AlreadyRunning:
+        logger.warning("normalize already running; skipping this run")
 
 
 if __name__ == "__main__":

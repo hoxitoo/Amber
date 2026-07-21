@@ -24,5 +24,6 @@ if __name__ == "__main__":
         threshold_floor=float(labeling.get("threshold_floor", 0.003)),
         threshold_cap=float(labeling.get("threshold_cap", 0.05)),
         horizon_steps_list=[int(x) for x in labeling.get("horizon_steps_list", [])],
+        min_warmup_bars=int(labeling.get("min_warmup_bars", 60)),
     )
     print(result)

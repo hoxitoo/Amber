@@ -4,7 +4,9 @@ from datetime import datetime, timezone
 import logging
 from pathlib import Path
 
+from amber.common.audit_log import log_universe
 from amber.common.config import ConfigLoader
+from amber.common.locks import AlreadyRunning, SingleInstanceLock
 from amber.common.logging import setup_logging
 from amber.common.manifest import ArtifactManifest, new_run_id, write_manifest
 from amber.exchange.bybit_public import MAINNET_REST_URL, TESTNET_REST_URL, BybitPublicClient
@@ -79,29 +81,36 @@ def main() -> None:
     run_id = new_run_id(prefix="collector")
     data_root = Path(config["storage"]["raw_dir"])
     state_root = Path(config["storage"]["state_dir"])
+    logs_root = Path(config["storage"]["logs_dir"])
     bybit_cfg = config["exchange"]["bybit"]
     symbols = bybit_cfg["symbols"]
     rest_url = bybit_cfg.get("rest_url") or (TESTNET_REST_URL if bybit_cfg.get("testnet") else MAINNET_REST_URL)
     backfill_limit = int(bybit_cfg.get("backfill_limit", 200))
 
-    sink = ParquetSink(data_root)
-    state = StateStore(state_root)
+    try:
+        with SingleInstanceLock(state_root / "locks", "collector"):
+            sink = ParquetSink(data_root)
+            state = StateStore(state_root)
+            # Record the in-scope universe for this run (Q1: auditable selection).
+            log_universe(logs_root, "collector", symbols, extra={"run_id": run_id})
 
-    with BybitPublicClient(rest_url=rest_url) as client:
-        emitted = collect_rest_backfill(client, sink, state, symbols, limit=backfill_limit)
+            with BybitPublicClient(rest_url=rest_url) as client:
+                emitted = collect_rest_backfill(client, sink, state, symbols, limit=backfill_limit)
 
-    state.set("collector", {"run_id": run_id, "emitted_records": emitted})
-    manifest = ArtifactManifest(
-        run_id=run_id,
-        artifact_type="collector_run",
-        artifact_version="v1",
-        created_at=datetime.now(timezone.utc).isoformat(),
-        config_ref="config/amber.yaml",
-        feature_spec_ref="config/features.yaml",
-        metadata={"symbols": symbols, "emitted_records": emitted, "topic": "normalized"},
-    )
-    write_manifest(data_root / "manifests" / run_id / "manifest.json", manifest)
-    logger.info("collector finished run_id=%s emitted=%s", run_id, emitted)
+            state.set("collector", {"run_id": run_id, "emitted_records": emitted})
+            manifest = ArtifactManifest(
+                run_id=run_id,
+                artifact_type="collector_run",
+                artifact_version="v1",
+                created_at=datetime.now(timezone.utc).isoformat(),
+                config_ref="config/amber.yaml",
+                feature_spec_ref="config/features.yaml",
+                metadata={"symbols": symbols, "emitted_records": emitted, "topic": "normalized"},
+            )
+            write_manifest(data_root / "manifests" / run_id / "manifest.json", manifest)
+            logger.info("collector finished run_id=%s emitted=%s", run_id, emitted)
+    except AlreadyRunning:
+        logger.warning("collector already running; skipping this run")
 
 
 if __name__ == "__main__":

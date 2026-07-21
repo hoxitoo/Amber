@@ -2,6 +2,14 @@
 
 _Date: 2026-07-21 · Scrutiny level: technical due diligence for a quantitative fund · Verdict below is deliberately critical, not congratulatory._
 
+> **Remediation status (2026-07-21).** Sprint-1 *code* items are implemented:
+> A2 atomic StateStore writes (temp + `os.replace`), A3 single-instance file
+> lock on all pipeline stages, Q6 warm-up gating (`min_warmup_bars`) in dataset
+> and scanner, Q7 PR-AUC + reliability curve in eval (surfaced in the dashboard),
+> Q1 universe-membership logging + a REST `list_instruments` for rule-based /
+> survivorship-aware selection. **Q2 (prove edge on real data) is not a code
+> task and remains open** — it requires real mainnet collection.
+
 ## Executive verdict
 
 The **engineering foundation is solid-to-good** after recent hardening (single offline/online feature engine, time-purged splits, out-of-sample eval flag, model-driven backtest, honest confirmed-outcome AUC, manifests/registry, tolerant IO, path guards). The commercial risk does **not** live in the code quality — it lives in two places the board rates **Critical**:

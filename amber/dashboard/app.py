@@ -184,6 +184,12 @@ with tab_model:
         e2.metric("Precision↓@thr", _num(ev.get("model_precision_down_at_threshold")))
         e3.metric("Brier↑", _num(ev.get("model_brier_up_cal")))
         e4.metric("Brier↓", _num(ev.get("model_brier_down_cal")))
+        p1, p2 = st.columns(2)
+        p1.metric("PR-AUC↑ (lift vs base)", _num(ev.get("model_pr_auc_up_cal")),
+                  delta=(f"×{_num(ev.get('model_pr_auc_up_lift'), '{:.2f}')}" if ev.get("model_pr_auc_up_lift") else None))
+        p2.metric("PR-AUC↓ (lift vs base)", _num(ev.get("model_pr_auc_down_cal")),
+                  delta=(f"×{_num(ev.get('model_pr_auc_down_lift'), '{:.2f}')}" if ev.get("model_pr_auc_down_lift") else None))
+        st.caption("PR-AUC — честная метрика для редких событий; lift > 1 значит лучше базовой частоты.")
 
         st.subheader("Бэктест (promotion gate)")
         if bt.get("error"):

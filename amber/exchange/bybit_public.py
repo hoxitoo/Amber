@@ -102,6 +102,27 @@ class BybitPublicClient:
         candles.sort(key=lambda c: c.ts)
         return candles
 
+    def list_instruments(self, *, quote_coin: str = "USDT") -> list[dict[str, Any]]:
+        """All perpetual instruments in the category, including their status.
+
+        Enables rule-based universe selection over the *full* population (not a
+        hand-picked survivor set) and captures contract status (e.g. delisting),
+        addressing the survivorship/selection-bias and contract-state findings.
+        Returns dicts: {symbol, status, launch_ms}.
+        """
+        result = self._get("/v5/market/instruments-info", {"category": self.category})
+        out: list[dict[str, Any]] = []
+        for item in result.get("list", []):
+            symbol = str(item.get("symbol", ""))
+            if quote_coin and str(item.get("quoteCoin", "")) != quote_coin:
+                continue
+            try:
+                launch_ms = int(item.get("launchTime", 0) or 0)
+            except (TypeError, ValueError):
+                launch_ms = 0
+            out.append({"symbol": symbol, "status": str(item.get("status", "")), "launch_ms": launch_ms})
+        return out
+
     def _ticker_item(self, symbol: str) -> dict[str, Any]:
         result = self._get("/v5/market/tickers", {"category": self.category, "symbol": symbol})
         items = result.get("list", [])

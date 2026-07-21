@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import re
+import tempfile
 from typing import Any
 
 
@@ -28,6 +30,18 @@ class StateStore:
             return json.load(fh)
 
     def set(self, key: str, value: dict[str, Any]) -> None:
+        """Persist state atomically: write to a temp file in the same directory,
+        fsync, then os.replace (atomic rename) so a crash mid-write can never
+        leave a truncated/corrupt watermark or offset file."""
         path = self._path(key)
-        with path.open("w", encoding="utf-8") as fh:
-            json.dump(value, fh, ensure_ascii=False, indent=2)
+        fd, tmp_name = tempfile.mkstemp(dir=str(self.state_root), prefix=f".{key}.", suffix=".tmp")
+        tmp = Path(tmp_name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(value, fh, ensure_ascii=False, indent=2)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, path)  # atomic on POSIX and Windows (same filesystem)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise

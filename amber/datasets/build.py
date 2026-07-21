@@ -77,6 +77,7 @@ def build_dataset(
     threshold_floor: float = 0.003,
     threshold_cap: float = 0.05,
     horizon_steps_list: list[int] | None = None,
+    min_warmup_bars: int = 0,
 ) -> dict[str, int]:
     horizons = _validate_horizons(horizon_steps=horizon_steps, horizon_steps_list=horizon_steps_list)
 
@@ -105,7 +106,13 @@ def build_dataset(
 
         prices = [float(r.get("mid_price", 0.0)) for r in rows]
         ret_1_vals = [float(r.get("ret_1", 0.0)) for r in rows]
-        clean_idx = [i for i, r in enumerate(rows) if not bool(r.get("is_synthetic", False))]
+        # Exclude synthetic gap-fill rows and warm-up rows whose long-lookback
+        # features are still degenerate (Q6): require enough observed history.
+        clean_idx = [
+            i
+            for i, r in enumerate(rows)
+            if not bool(r.get("is_synthetic", False)) and int(r.get("obs", 0) or 0) >= min_warmup_bars
+        ]
 
         for i in clean_idx:
             row_up = up_pct

@@ -67,6 +67,28 @@ class TestBybitPublicClient(unittest.TestCase):
         self.assertEqual(oi.oi, 123456.0)
         self.assertEqual(funding.funding, 0.0001)
 
+    def test_list_instruments_filters_quote_and_parses_status(self):
+        routes = {
+            "/v5/market/instruments-info": {
+                "retCode": 0,
+                "retMsg": "OK",
+                "result": {
+                    "list": [
+                        {"symbol": "BTCUSDT", "quoteCoin": "USDT", "status": "Trading", "launchTime": "1600000000000"},
+                        {"symbol": "ETHPERP", "quoteCoin": "USDC", "status": "Trading", "launchTime": "0"},
+                        {"symbol": "OLDUSDT", "quoteCoin": "USDT", "status": "Delisted", "launchTime": "bad"},
+                    ]
+                },
+            }
+        }
+        client = BybitPublicClient(client=_mock_client(routes))
+        instruments = client.list_instruments()
+        symbols = {i["symbol"] for i in instruments}
+        self.assertEqual(symbols, {"BTCUSDT", "OLDUSDT"})  # USDC filtered out
+        old = next(i for i in instruments if i["symbol"] == "OLDUSDT")
+        self.assertEqual(old["status"], "Delisted")
+        self.assertEqual(old["launch_ms"], 0)  # unparseable -> 0
+
     def test_api_error_raises(self):
         routes = {"/v5/market/kline": {"retCode": 10002, "retMsg": "rate limited", "result": {}}}
         client = BybitPublicClient(client=_mock_client(routes))

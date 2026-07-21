@@ -7,7 +7,9 @@ import time
 from typing import Any
 
 from amber.alerts.router import AlertRateLimiter, route_alert
+from amber.common.audit_log import log_universe
 from amber.common.config import ConfigLoader
+from amber.common.locks import AlreadyRunning, SingleInstanceLock
 from amber.common.logging import setup_logging
 from amber.common.types import SignalV1
 from amber.models.infer import load_latest_model
@@ -67,7 +69,11 @@ def scan_once(
     signal_cfg = config.get("signal", {})
     top_k = int(signal_cfg.get("top_k_universe", 20))
     min_dollar_volume = float(signal_cfg.get("min_dollar_volume", 0.0))
-    universe = set(select_universe(features_root, top_k=top_k, min_obs=1, min_dollar_volume=min_dollar_volume))
+    min_warmup = int(config.get("labeling", {}).get("min_warmup_bars", 60))
+    universe = set(
+        select_universe(features_root, top_k=top_k, min_obs=min_warmup, min_dollar_volume=min_dollar_volume)
+    )
+    log_universe(logs_root, "scanner", sorted(universe))
 
     try:
         model = load_latest_model(models_root)
@@ -81,6 +87,8 @@ def scan_once(
     for row in feature_rows:
         if bool(row.get("is_synthetic", False)):
             continue  # do not signal on gap-filled candles
+        if int(row.get("obs", 0) or 0) < min_warmup:
+            continue  # not enough history: long-lookback features are still degenerate
         signal = score_signal(
             row,
             models_root=models_root,
@@ -119,11 +127,15 @@ def main(loop: bool = False) -> None:
     alert_limiter = AlertRateLimiter(cooldown_sec=max(0, int(thresholds_cfg.get("cooldown_sec", 0))), store=state)
 
     interval = max(5, int(config.get("scanner", {}).get("interval_sec", 60)))
-    while True:
-        scan_once(config, thresholds_cfg, gate, alert_limiter)
-        if not loop:
-            break
-        time.sleep(interval)
+    try:
+        with SingleInstanceLock(Path(config["storage"]["state_dir"]) / "locks", "scanner"):
+            while True:
+                scan_once(config, thresholds_cfg, gate, alert_limiter)
+                if not loop:
+                    break
+                time.sleep(interval)
+    except AlreadyRunning:
+        logger.warning("scanner already running; skipping")
 
 
 if __name__ == "__main__":
