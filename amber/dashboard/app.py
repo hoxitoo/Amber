@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import pandas as pd
 import streamlit as st
 
+from amber.dashboard import control as C
 from amber.dashboard import data as D
 
 st.set_page_config(page_title="Amber", page_icon="🟡", layout="wide")
@@ -122,8 +123,8 @@ c3.metric("Символов", len(state["symbols"]))
 c4.metric("Строк в датасете", _num(ds.get("rows") if ds else None, "{:.0f}", "0"))
 c5.metric("Сигналов (лог)", len(state["signals"]))
 
-tab_overview, tab_model, tab_data, tab_symbol = st.tabs(
-    ["📊 Обзор", "🧠 Модель", "🗂 Данные и дрифт", "📈 По символу"]
+tab_overview, tab_model, tab_data, tab_symbol, tab_control = st.tabs(
+    ["📊 Обзор", "🧠 Модель", "🗂 Данные и дрифт", "📈 По символу", "⚙️ Управление"]
 )
 
 # --- Overview: live signals --------------------------------------------------
@@ -287,3 +288,80 @@ with tab_symbol:
                 )
             fig.update_layout(height=520, xaxis_rangeslider_visible=False, margin={"t": 30, "b": 10})
             st.plotly_chart(fig, use_container_width=True)
+
+# --- Control panel -----------------------------------------------------------
+with tab_control:
+    from pathlib import Path
+
+    pm = C.ProcessManager(Path(state["storage"]["state_dir"]) / "procs", root)
+
+    st.subheader("Символы для сбора")
+    current = "\n".join(state["symbols"])
+    edited = st.text_area("По одному символу на строку", value=current, height=140, label_visibility="collapsed")
+    if st.button("💾 Сохранить символы"):
+        try:
+            saved = C.set_symbols(root, edited.splitlines())
+            st.success(f"Сохранено {len(saved)} символов (бэкап: config/amber.yaml.bak). Перезапусти коллектор.")
+            st.cache_data.clear()
+        except Exception as exc:
+            st.error(f"Не удалось сохранить: {exc}")
+
+    st.divider()
+    st.subheader("Живые процессы")
+    for name, svc in C.SERVICES.items():
+        stt = pm.status(name)
+        col_lbl, col_state, col_btn = st.columns([2, 2, 1])
+        col_lbl.markdown(f"**{svc['label']}**")
+        if stt["running"]:
+            up = stt["uptime_sec"] or 0
+            col_state.markdown(f"🟢 работает (PID {stt['pid']}, {up/60:.0f} мин)")
+            if col_btn.button("⏹ Стоп", key=f"stop_{name}"):
+                pm.stop(name)
+                st.rerun()
+        else:
+            col_state.markdown("⚪ остановлен")
+            if col_btn.button("▶ Старт", key=f"start_{name}"):
+                pm.start(name, svc["argv"])
+                st.rerun()
+        log = pm.tail_log(name, lines=15)
+        if log:
+            with st.expander(f"Лог: {svc['label']}"):
+                st.code(log)
+
+    st.divider()
+    st.subheader("Конвейер по шагам")
+    st.caption("Каждый шаг выполняется и показывает вывод. Порядок: backfill/normalize → features → dataset → train → backtest.")
+    cols = st.columns(3)
+    for i, step in enumerate(C.PIPELINE_STEPS):
+        if cols[i % 3].button(step["label"], key=f"step_{step['key']}", use_container_width=True):
+            with st.spinner(f"{step['label']}…"):
+                rc, out = pm.run_once(step["argv"])
+            st.session_state["last_step_out"] = (step["label"], rc, out)
+            st.cache_data.clear()
+
+    st.divider()
+    if st.button("🚀 Полный цикл: normalize → features → dataset → train → backtest", type="primary"):
+        results = []
+        progress = st.progress(0.0)
+        for i, step in enumerate(C.FULL_CYCLE):
+            with st.spinner(f"{step['label']}…"):
+                rc, out = pm.run_once(step["argv"])
+            results.append((step["label"], rc, out))
+            progress.progress((i + 1) / len(C.FULL_CYCLE))
+            if rc != 0:
+                st.error(f"Шаг «{step['label']}» завершился с ошибкой — цикл остановлен.")
+                break
+        st.session_state["full_cycle_out"] = results
+        st.cache_data.clear()
+
+    if "last_step_out" in st.session_state:
+        label, rc, out = st.session_state["last_step_out"]
+        (st.success if rc == 0 else st.error)(f"{label}: код возврата {rc}")
+        with st.expander("Вывод последнего шага", expanded=True):
+            st.code(out[-4000:] or "(пусто)")
+
+    if "full_cycle_out" in st.session_state:
+        with st.expander("Вывод полного цикла", expanded=True):
+            for label, rc, out in st.session_state["full_cycle_out"]:
+                st.markdown(f"**{label}** — код {rc}")
+                st.code(out[-1500:] or "(пусто)")

@@ -40,15 +40,29 @@ python scripts/report.py          # overall_ok gate for dashboards/uptime checks
 ```
 
 ## Dashboard (UI)
-A read-only Streamlit dashboard shows system status, live signals, model quality,
-data/drift and per-symbol charts.
+A Streamlit dashboard shows system status, live signals, model quality,
+data/drift, per-symbol charts, and a **control panel** to run everything with
+buttons (no manual scripts).
+
+**One-click launch** (creates a venv and installs deps on first run):
+- Windows: double-click `Amber.bat`
+- macOS: double-click `launch.command` (first time: right-click → Open)
+- Linux: `./launch.command`
+
+Or manually:
 ```bash
 pip install -r requirements-dashboard.txt
 streamlit run amber/dashboard/app.py        # or: python scripts/run_dashboard.py
 ```
-Opens in the browser at `http://localhost:8501`. Run it from the project root so
-it can find `config/` and `data/`. It degrades gracefully before you have data or
-a trained model.
+Opens at `http://localhost:8501`. Run it from the project root. It degrades
+gracefully before you have data or a trained model.
+
+The **⚙️ Управление** tab lets you: edit the symbol list, start/stop the WS
+collector and scanner loop, run each pipeline stage, or run the full
+`normalize → features → dataset → train → backtest` cycle — all from the UI.
+
+A standalone executable can be built with PyInstaller — see `packaging/README.md`
+(the launcher above is the recommended, reliable path).
 
 ## Alerts
 Set credentials via environment (never in config/code):
