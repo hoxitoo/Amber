@@ -1,9 +1,26 @@
-version: v2
+version: v3
 features:
+  # returns (short -> long context)
   - name: ret_1
   - name: ret_5
   - name: ret_20
+  - name: ret_60
+  # volume surge & acceleration
   - name: vol_z_20
+  - name: vol_ratio_20
+  - name: vol_accel
+  # open interest & funding
   - name: oi_z_20
+  - name: oi_roc_5
   - name: funding_z_20
-  - name: mid_price
+  # volatility compression -> expansion
+  - name: squeeze_ratio
+  - name: bb_width_20
+  - name: range_atr_14
+  # breakout geometry
+  - name: dist_to_high_20
+  - name: dist_to_low_20
+  - name: breakout_up_20
+  - name: breakout_dn_20
+  # microstructure
+  - name: spread_bps

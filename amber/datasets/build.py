@@ -8,6 +8,7 @@ from typing import Any
 
 from amber.common.manifest import ArtifactManifest, new_run_id, write_manifest
 from amber.labeling.events import label_event_path
+from amber.models.features import MODEL_FEATURES
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -129,17 +130,11 @@ def build_dataset(
                     continue
                 future = prices[i : i + horizon + 1]
                 labels = label_event_path(future, up_pct=row_up, down_pct=row_down)
-                out_rows.append(
+                out_row = {name: rows[i].get(name, 0.0) for name in MODEL_FEATURES}
+                out_row.update(
                     {
                         "symbol": symbol,
                         "ts": rows[i]["ts"],
-                        "ret_1": rows[i].get("ret_1", 0.0),
-                        "ret_5": rows[i].get("ret_5", 0.0),
-                        "ret_20": rows[i].get("ret_20", 0.0),
-                        "vol_z_20": rows[i].get("vol_z_20", 0.0),
-                        "oi_z_20": rows[i].get("oi_z_20", 0.0),
-                        "funding_z_20": rows[i].get("funding_z_20", 0.0),
-                        "spread_bps": rows[i].get("spread_bps", 0.0),
                         "mid_price": rows[i].get("mid_price", 0.0),
                         "obs": rows[i].get("obs", 0),
                         "up_hit": labels["up_hit"],
@@ -151,6 +146,7 @@ def build_dataset(
                         "down_pct": row_down,
                     }
                 )
+                out_rows.append(out_row)
 
     # Global chronological order so downstream walk-forward splits slice time,
     # not symbol blocks.
