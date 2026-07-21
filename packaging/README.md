@@ -14,6 +14,20 @@ On first run it creates a `.venv`, installs dependencies, and opens the dashboar
 at `http://localhost:8501`. Later runs just launch it. This is the safest path and
 gives the same "double-click to open" result as an exe.
 
+## Option A2 — let GitHub build it for you (no local setup)
+
+A CI workflow (`.github/workflows/build-windows.yml`) builds the package on
+GitHub's Windows runner, so you never need a build toolchain locally:
+
+1. On GitHub: **Actions → build-windows → Run workflow** (one click), or push a
+   tag like `v0.1.0`.
+2. When it finishes, download the artifacts from the run:
+   - **Amber-portable** — unzip, double-click `Amber.bat`. Always works.
+   - **Amber-windows-exe** — a standalone PyInstaller build (best-effort).
+3. Pushing a `v*` tag additionally publishes a GitHub Release with these assets.
+
+This is the recommended way to get a Windows build without installing anything.
+
 ## Option B — standalone executable (advanced, build on your OS)
 
 A true single distributable via PyInstaller. **Must be built on the target OS**

@@ -1,0 +1,75 @@
+name: build-windows
+
+# Produces a downloadable, one-click Amber package.
+# Run it manually from the Actions tab (workflow_dispatch) or by pushing a
+# version tag (v*). Two artifacts are produced:
+#   - Amber-portable      : source + Amber.bat launcher (unzip, double-click). Always works.
+#   - Amber-windows-exe   : a standalone build via PyInstaller (best-effort).
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  portable-bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble portable bundle
+        run: |
+          mkdir -p out/Amber
+          cp -r amber scripts config packaging deploy \
+                requirements.txt requirements-dashboard.txt \
+                Amber.bat launch.command README.md out/Amber/
+          cd out && zip -r Amber-portable.zip Amber
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Amber-portable
+          path: out/Amber-portable.zip
+
+  windows-exe:
+    runs-on: windows-latest
+    continue-on-error: true  # single-file Streamlit builds are finicky; portable bundle is the guaranteed path
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dashboard.txt pyinstaller
+      - name: Build executable
+        run: pyinstaller packaging/amber.spec
+      - name: Zip build
+        run: Compress-Archive -Path dist/Amber/* -DestinationPath Amber-windows-exe.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Amber-windows-exe
+          path: Amber-windows-exe.zip
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [portable-bundle]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            "dist/Amber-portable/Amber-portable.zip" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "Amber ${GITHUB_REF_NAME}" \
+            --generate-notes
+          if [ -f "dist/Amber-windows-exe/Amber-windows-exe.zip" ]; then
+            gh release upload "${GITHUB_REF_NAME}" "dist/Amber-windows-exe/Amber-windows-exe.zip" --repo "${GITHUB_REPOSITORY}"
+          fi

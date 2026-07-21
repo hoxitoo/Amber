@@ -1,41 +1,96 @@
-# Project Amber — Updated Roadmap
+# Project Amber — Roadmap
 
-## Stage 1 — Stable local ML scanner foundation
+_Last updated: 2026-07-21_
+
+Amber is a local-first ML scanner for Bybit futures that predicts event
+probabilities (pump/dump) and emits alerts. Not an auto-trader.
+
+Legend: `[x]` done · `[~]` partial · `[ ]` planned.
+
+---
+
+## Stage 1 — Stable local ML scanner foundation · **done**
 - [x] Local pipeline skeleton and runnable scripts.
-- [x] Basic collector/features/dataset/model/scanner flow.
-- [x] Signal schema contract (`SignalV1`) and manifests.
-- [x] Health/metrics/drift initial monitoring primitives.
-- [x] Real Bybit WS/REST client (`kline` + `tickers` incl. OI/funding; REST backfill).
-- [x] Implement `NormalizedRow` + strict validation (Pydantic v2).
-- [x] Gap-fill and `is_synthetic` handling in IO (excluded from training and signaling).
-- [x] Unified FeatureEngine (offline/live parity).
-- [x] Idempotent ingestion (offsets + watermarks; safe re-runs).
+- [x] Real Bybit v5 WS client (kline + tickers → bid/ask/OI/funding), REST backfill.
+- [x] `NormalizedRow` strict validation (Pydantic v2), gap-fill + `is_synthetic`.
+- [x] Idempotent ingestion (byte offsets + per-symbol ts watermarks; safe re-runs).
+- [x] Unified `FeatureEngine` (offline/live parity, no train/serve skew).
+- [x] Signal schema (`SignalV1`), manifests, artifact registry.
 
-## Stage 2 — Modeling correctness and trust
-- [x] LightGBM pump/dump dual-model setup (logreg fallback).
-- [x] Adaptive threshold labeling with rolling volatility and multi-horizon support.
-- [x] Walk-forward CV with purge gap in time (candles), not row indices.
-- [x] Isotonic calibration on a dedicated holdout split.
-- [x] SHAP top-features in signal explanation (LightGBM `pred_contrib`).
-- [x] Directional score + spread/cooldown/concurrency risk filters (persistent).
+## Stage 2 — Modeling correctness and trust · **done**
+- [x] LightGBM pump/dump dual-model (logreg fallback, constant-head for single-class).
+- [x] Adaptive volatility-based labeling, multi-horizon, censored-row exclusion.
+- [x] Time-based walk-forward CV with purge gaps; dedicated calib/test segments.
+- [x] Isotonic calibration on a held-out segment; out-of-sample eval (`in_sample` flag).
+- [x] SHAP-style feature contributions in explanations.
+- [x] Breakout / momentum-precursor feature pack (18 features: volume surge,
+      volatility squeeze, breakout geometry, OI rate-of-change).
+- [x] Directional score + spread/cooldown/concurrency risk filters (persistent state).
 
-## Stage 3 — Monitoring and strategy validation
-- [x] Rolling AUC monitor over latest **confirmed** events (real outcome join).
-- [x] PSI monitor per key feature vs train reference with alert thresholds.
-- [x] Prediction bias monitor (`mean P(pump)` vs `mean P(dump)`).
-- [x] Event-based backtest with slippage/commission, model-driven on the test split.
-- [ ] 24h+ soak on live mainnet data (needs deployment; see below).
+## Stage 3 — Monitoring and validation · **done**
+- [x] Health check on the paths the pipeline actually writes.
+- [x] Rolling AUC over **confirmed real outcomes** (no self-referential labels).
+- [x] Per-feature PSI vs train reference; prediction-bias monitor.
+- [x] Model-driven event backtest on the test split (promotion gate).
+- [x] PR-AUC + lift-over-base-rate + reliability curve in eval (audit Q7).
 
-## Stage 4 — Production readiness
-- [x] Telegram transport and rate limiting (env-based credentials).
-- [x] Better universe selection (top-K + liquidity floor via `notional_volume_1m`).
-- [x] Runtime supervision profile (systemd units / docker-compose in `deploy/`).
-- [x] Packaging/deployment docs for VPS.
-- [ ] Live go-live: owner provides VPS, symbol universe, Telegram credentials,
-      and acceptance thresholds; then run the 24h soak and promotion gate.
+## Stage 4 — Production readiness · **done**
+- [x] Telegram + Discord transports (env credentials), router warns on unknown channels.
+- [x] Universe selection with liquidity floor + warm-up gating.
+- [x] systemd units + docker-compose (`deploy/`); mainnet/testnet switch.
+- [x] Atomic state writes + single-instance locks on all stages (audit A2/A3).
+- [x] Warm-up-row gating in dataset and scanner (audit Q6).
 
-## Stage 5 — Productization (next iteration)
-- [ ] API and dashboard.
-- [ ] Model registry rollback workflow.
-- [ ] SaaS-facing observability + tenant-safe isolation.
-- [ ] Parquet storage backend with date partitioning.
+## Stage 5 — Productization · **in progress**
+- [x] Streamlit dashboard (status, live signals, model quality, data/drift, per-symbol).
+- [x] Control panel: start/stop services, run pipeline stages, symbol editor — all in UI.
+- [x] One-click launchers (`Amber.bat`, `launch.command`) + PyInstaller packaging.
+- [x] CI: lint + 3.11/3.12 test matrix; Windows build workflow (downloadable package).
+- [ ] Model registry rollback workflow from the UI.
+- [ ] Parquet storage backend with date partitioning (audit A1).
+- [ ] Push observability: alert on `overall_ok` flip / collector death (audit A6).
+
+---
+
+## Current state (honest)
+
+Everything above the line is **built, tested (127 tests), and works end-to-end on
+synthetic data**. The machinery is sound. What is **not** yet proven is the one
+thing that matters commercially:
+
+> **Does the model have real predictive edge?** All positive metrics to date are
+> from synthetic data with signal injected on purpose. This can only be answered
+> by collecting real Bybit mainnet data and reading out-of-sample PR-AUC.
+
+See `docs/audit_review_board_2026-07.md` for the full institutional audit.
+
+---
+
+## Future steps — audit-driven backlog
+
+### Sprint 1 — prove-or-kill + cheap correctness
+- [x] A2 atomic state writes · A3 single-instance locks · Q6 warm-up gating ·
+      Q7 PR-AUC + reliability · Q1 universe logging + `list_instruments`.
+- [ ] **Q2 — prove edge on real data (owner action).** Collect ≥2–4 weeks of real
+      mainnet data over a rule-based universe; read purged out-of-sample PR-AUC;
+      declare a kill criterion up front. *Not a code task — needs real collection.*
+
+### Sprint 2 — statistical validity & robustness
+- [ ] Q3 embargo + de-overlap / uniqueness weights for overlapping events.
+- [ ] Q4 per-regime evaluation (trend/range/high-vol/low-vol).
+- [ ] Q5 decouple the label threshold from the volatility feature.
+- [ ] M1 coherent pump/dump/none probability semantics (3-class or joint calibration).
+- [ ] M2 class-imbalance handling (weights / precision-oriented objective).
+- [ ] M3/M4/M5 feature hygiene (correlation prune, winsorization, rolling recalibration).
+- [ ] T2 model the 1-bar execution lag in the backtest.
+- [ ] A4 async write buffering · A5 config content-hashing · A6 push observability.
+
+### Sprint 3 — market realism & scale
+- [ ] T1 depth-aware fills + capacity in the backtest (collect L2).
+- [ ] T3 order-flow / liquidation / book-imbalance features (WS `publicTrade` + `orderbook`).
+- [ ] T4 wash/manipulated-volume filter · T5 contract-state (ST/delisting) awareness.
+- [ ] A1 Parquet partitioning · M6 artifact schema validation.
+
+### Backlog
+- [ ] T6 cross-exchange lead/lag features · A7 feature-list relocation.
+- [ ] API + multi-tenant observability (SaaS direction).
