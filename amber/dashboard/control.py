@@ -191,6 +191,11 @@ PIPELINE_STEPS: list[dict[str, Any]] = [
     {"key": "backtest", "label": "Бэктест", "argv": ["scripts/run_backtest.py"]},
 ]
 
-# The "collect -> train" one-click sequence (excludes REST backfill and the
-# always-on services).
-FULL_CYCLE: list[dict[str, Any]] = [s for s in PIPELINE_STEPS if s["key"] != "backfill"]
+# The one-click sequence. REST backfill runs first so a fresh install has enough
+# history to clear the warm-up threshold; it is idempotent (watermark dedup), so
+# re-running the cycle never duplicates data.
+FULL_CYCLE: list[dict[str, Any]] = list(PIPELINE_STEPS)
+
+# Exit code the train step uses to signal "not enough data yet" (informational,
+# not a real failure).
+NOT_ENOUGH_DATA_CODE = 2

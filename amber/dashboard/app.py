@@ -447,7 +447,7 @@ with tab_control:
             st.cache_data.clear()
 
     st.divider()
-    if st.button("🚀 Полный цикл: normalize → features → dataset → train → backtest", type="primary"):
+    if st.button("🚀 Полный цикл: backfill → normalize → features → dataset → train → backtest", type="primary"):
         results = []
         progress = st.progress(0.0)
         for i, step in enumerate(C.FULL_CYCLE):
@@ -455,8 +455,11 @@ with tab_control:
                 rc, out = pm.run_once(step["argv"])
             results.append((step["label"], rc, out))
             progress.progress((i + 1) / len(C.FULL_CYCLE))
+            if rc == C.NOT_ENOUGH_DATA_CODE:
+                st.warning(f"Пока недостаточно данных для обучения — {step['label']} отложен. Детали ниже.")
+                break
             if rc != 0:
-                st.error(f"Шаг «{step['label']}» завершился с ошибкой — цикл остановлен.")
+                st.error(f"Шаг «{step['label']}» завершился с ошибкой — цикл остановлен. Детали ниже.")
                 break
         st.session_state["full_cycle_out"] = results
         st.cache_data.clear()

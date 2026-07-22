@@ -5,10 +5,36 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amber.common.config import ConfigLoader
 from amber.models.calibrate import calibrate_model
+from amber.models.dataset_io import load_latest_dataset_rows
 from amber.models.eval import evaluate_model
 from amber.models.registry import register_model
 from amber.models.train import train_model
 from amber.monitoring.metrics import emit_metrics
+
+# Below this many usable rows a model cannot be trained honestly (warm-up gating
+# needs >= min_warmup_bars candles per symbol before any row qualifies).
+MIN_TRAIN_ROWS = 50
+
+
+def _guard_enough_data(datasets_root: Path) -> None:
+    try:
+        rows, _run = load_latest_dataset_rows(datasets_root)
+    except ValueError:
+        rows = []
+    if len(rows) >= MIN_TRAIN_ROWS:
+        return
+    print(
+        "Недостаточно данных для обучения.\n"
+        f"В датасете {len(rows)} строк (нужно >= {MIN_TRAIN_ROWS}).\n\n"
+        "Что делать:\n"
+        "  1) Нажми «REST-backfill истории» — это мгновенно подтянет ~200-1000 свечей\n"
+        "     на символ, чтобы преодолеть порог warm-up (>= 60 свечей на символ).\n"
+        "  2) Затем «Нормализация» → «Фичи» → «Датасет» (или снова «Полный цикл»).\n"
+        "  3) Либо просто дай WS-коллектору поработать 1-2 часа и повтори.\n\n"
+        "Это не ошибка — модели пока не на чем учиться.",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
 
 
 if __name__ == "__main__":
@@ -16,6 +42,8 @@ if __name__ == "__main__":
     datasets_root = Path(config["storage"]["datasets_dir"])
     models_root = Path(config["storage"]["models_dir"])
     logs_root = Path(config["storage"]["logs_dir"])
+
+    _guard_enough_data(datasets_root)
 
     model_cfg = config.get("model", {}) if isinstance(config.get("model", {}), dict) else {}
     cv_cfg = model_cfg.get("cv", {})
