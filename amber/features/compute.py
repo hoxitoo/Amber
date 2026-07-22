@@ -10,8 +10,6 @@ from amber.storage.state_store import StateStore
 
 logger = logging.getLogger(__name__)
 
-FEATURES_WATERMARK_KEY = "features_watermark"
-
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
@@ -40,41 +38,36 @@ def compute_batch_features(
     raw_root: Path,
     out_root: Path,
     symbols: list[str],
-    state: StateStore | None = None,
+    state: StateStore | None = None,  # kept for call compatibility; no longer used
 ) -> dict[str, int]:
-    """Recompute features for every normalized row and append only new rows.
+    """Recompute the full feature file for every symbol from sorted normalized rows.
 
-    The full normalized history is replayed through the FeatureEngine (rolling
-    windows need it), but rows already written in previous runs are skipped via a
-    per-symbol watermark, keeping the stage idempotent.
+    The file is rewritten atomically each run rather than appended to. Normalized
+    history can grow non-append (REST backfill fills candles *behind* the live WS
+    watermark), which an append-only + count-watermark scheme would either
+    duplicate or miss. A full recompute is always correct and, at local scale
+    (thousands of rows/symbol), cheap. Partitioned storage for large scale is the
+    Sprint-3 backlog item (A1).
     """
     out_root.mkdir(parents=True, exist_ok=True)
-    watermark: dict[str, int] = {}
-    if state is not None:
-        watermark = {k: int(v) for k, v in state.get(FEATURES_WATERMARK_KEY).items()}
 
     written = 0
     for symbol in symbols:
         rows = _read_normalized_rows(raw_root, symbol)
         if not rows:
             continue
-        rows.sort(key=lambda r: int(r.get("ts", 0)))
+        rows.sort(key=lambda r: int(r.get("ts", 0) or 0))
 
         engine = FeatureEngine()
         feature_rows = engine.transform_rows(rows)
-        already = min(int(watermark.get(symbol, 0)), len(feature_rows))
-        new_rows = feature_rows[already:]
-        if not new_rows:
-            continue
 
         target = out_root / "features" / symbol
         target.mkdir(parents=True, exist_ok=True)
-        with (target / "part-000.jsonl").open("a", encoding="utf-8") as fh:
-            for feature_row in new_rows:
+        tmp = target / "part-000.jsonl.tmp"
+        with tmp.open("w", encoding="utf-8") as fh:
+            for feature_row in feature_rows:
                 fh.write(json.dumps(feature_row, ensure_ascii=False) + "\n")
-        written += len(new_rows)
-        watermark[symbol] = len(feature_rows)
+        tmp.replace(target / "part-000.jsonl")  # atomic swap
+        written += len(feature_rows)
 
-    if state is not None:
-        state.set(FEATURES_WATERMARK_KEY, watermark)
     return {"written_rows": written}

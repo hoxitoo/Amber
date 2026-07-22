@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 import logging
 from pathlib import Path
 
@@ -18,6 +19,22 @@ from amber.storage.state_store import StateStore
 logger = logging.getLogger(__name__)
 
 
+def _existing_normalized_ts(raw_root: Path, symbol: str) -> set[int]:
+    """Timestamps already present in the normalized series for a symbol."""
+    seen: set[int] = set()
+    for part in sorted((raw_root / "normalized" / symbol).glob("part-*.jsonl")):
+        with part.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    seen.add(int(json.loads(line)["ts"]))
+                except (json.JSONDecodeError, KeyError, ValueError, TypeError):
+                    continue
+    return seen
+
+
 def collect_rest_backfill(
     client: BybitPublicClient,
     sink: ParquetSink,
@@ -26,11 +43,15 @@ def collect_rest_backfill(
     *,
     interval: str = "1",
     limit: int = 200,
+    raw_root: Path | None = None,
 ) -> int:
-    """Backfill recent klines per symbol via REST into `normalized/`.
+    """Backfill historical klines per symbol via REST into `normalized/`.
 
-    Shares the `normalized_watermark` state with the WS normalize stage so the two
-    ingestion paths never write duplicate candles.
+    Dedup is by the set of timestamps already stored, NOT by the forward
+    `normalized_watermark`: REST returns *past* candles, and the WS normalize
+    stage advances that watermark to the present, so a forward-only skip would
+    drop the entire backfill. Deduping on actual stored ts lets backfill fill the
+    history *behind* the live stream without duplicating anything.
     """
     normalizer = BybitNormalizer()
     watermark = state.get(WATERMARK_STATE_KEY)
@@ -53,10 +74,12 @@ def collect_rest_backfill(
         if candles:
             candles = candles[:-1]
 
+        seen = _existing_normalized_ts(raw_root, symbol) if raw_root is not None else set()
         rows = []
         prev = None
         for candle in candles:
-            if candle.ts <= last_ts.get(symbol, -1):
+            if candle.ts in seen:
+                prev = None  # don't gap-fill across an already-present candle
                 continue
             row = normalizer.to_normalized(candle)
             step_ms = step_ms_for_tf(row.tf)
@@ -64,12 +87,13 @@ def collect_rest_backfill(
                 rows.extend([x.model_dump() for x in gap_fill(prev, row.ts, step_ms)])
             rows.append(row.model_dump())
             prev = row
-            last_ts[symbol] = candle.ts
+            last_ts[symbol] = max(last_ts.get(symbol, -1), candle.ts)
 
         if rows:
             sink.write_records(topic="normalized", symbol=symbol, records=rows)
             emitted += len(rows)
 
+    # Never lower the watermark: the WS stream owns forward progress.
     state.set(WATERMARK_STATE_KEY, {"last_ts": last_ts})
     return emitted
 
@@ -95,7 +119,9 @@ def main() -> None:
             log_universe(logs_root, "collector", symbols, extra={"run_id": run_id})
 
             with BybitPublicClient(rest_url=rest_url) as client:
-                emitted = collect_rest_backfill(client, sink, state, symbols, limit=backfill_limit)
+                emitted = collect_rest_backfill(
+                    client, sink, state, symbols, limit=backfill_limit, raw_root=data_root
+                )
 
             state.set("collector", {"run_id": run_id, "emitted_records": emitted})
             manifest = ArtifactManifest(
