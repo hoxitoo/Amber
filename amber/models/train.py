@@ -27,9 +27,48 @@ def _std(xs: list[float]) -> float:
     return math.sqrt(sum((x - m) ** 2 for x in xs) / len(xs))
 
 
-def _fit_head(x: list[list[float]], y: list[int]) -> dict[str, Any]:
+def _clip_bounds(x: list[list[float]], lo_pct: float = 0.01, hi_pct: float = 0.99) -> dict[str, list[float]]:
+    """Per-feature winsorization bounds (1st/99th pct) computed on train data.
+
+    Unbounded ratio features (vol_ratio, oi_roc, ...) spike; clipping stabilizes
+    the logreg fallback and keeps PSI reference quantiles meaningful (audit M4).
+    """
+    out: dict[str, list[float]] = {}
+    n = len(x)
+    if n < 20:
+        return out
+    for j, name in enumerate(MODEL_FEATURES):
+        col = sorted(row[j] for row in x)
+        lo = col[int((n - 1) * lo_pct)]
+        hi = col[int((n - 1) * hi_pct)]
+        if hi > lo:
+            out[name] = [float(lo), float(hi)]
+    return out
+
+
+def _apply_clip(x: list[list[float]], bounds: dict[str, list[float]]) -> list[list[float]]:
+    if not bounds:
+        return x
+    idx = {name: j for j, name in enumerate(MODEL_FEATURES)}
+    clipped = [row[:] for row in x]
+    for name, (lo, hi) in bounds.items():
+        j = idx.get(name)
+        if j is None:
+            continue
+        for row in clipped:
+            row[j] = min(hi, max(lo, row[j]))
+    return clipped
+
+
+def _fit_head(x: list[list[float]], y: list[int], w: list[float] | None = None) -> dict[str, Any]:
     """Fit one event head. LightGBM when available, logistic regression as
-    fallback, constant prior when the labels are single-class."""
+    fallback, constant prior when the labels are single-class.
+
+    `w` are sample weights (1/horizon uniqueness proxy for overlapping event
+    windows, audit Q3). Class imbalance is handled via scale_pos_weight (audit
+    M2); the resulting raw scores are rank-oriented and are calibrated
+    downstream before any decision is made.
+    """
     pos = sum(y)
     if pos == 0 or pos == len(y):
         rate = pos / len(y) if y else 0.0
@@ -48,8 +87,13 @@ def _fit_head(x: list[list[float]], y: list[int]) -> dict[str, Any]:
             "min_data_in_leaf": max(5, min(20, len(y) // 10)),
             "feature_fraction": 1.0,
             "seed": 42,
+            "scale_pos_weight": (len(y) - pos) / pos,
         }
-        dataset = lgb.Dataset(np.asarray(x, dtype=float), label=np.asarray(y, dtype=float))
+        dataset = lgb.Dataset(
+            np.asarray(x, dtype=float),
+            label=np.asarray(y, dtype=float),
+            weight=np.asarray(w, dtype=float) if w is not None else None,
+        )
         booster = lgb.train(params, dataset, num_boost_round=150)
         return {
             "type": "lightgbm",
@@ -59,9 +103,9 @@ def _fit_head(x: list[list[float]], y: list[int]) -> dict[str, Any]:
     except ImportError:
         from sklearn.linear_model import LogisticRegression
 
-        clf = LogisticRegression(max_iter=1000)
-        clf.fit(x, y)
-        weights = {name: float(w) for name, w in zip(MODEL_FEATURES, clf.coef_[0])}
+        clf = LogisticRegression(max_iter=1000, class_weight="balanced")
+        clf.fit(x, y, sample_weight=w)
+        weights = {name: float(wt) for name, wt in zip(MODEL_FEATURES, clf.coef_[0])}
         return {
             "type": "logreg",
             "weights": weights,
@@ -71,11 +115,16 @@ def _fit_head(x: list[list[float]], y: list[int]) -> dict[str, Any]:
 
 
 def _fit_dual(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    x = [feature_vector(r) for r in rows]
+    x_raw = [feature_vector(r) for r in rows]
+    bounds = _clip_bounds(x_raw)
+    x = _apply_clip(x_raw, bounds)
+    # Uniqueness proxy for overlapping label windows: a row spanning H bars gets
+    # weight 1/H so each underlying candle contributes roughly once (audit Q3).
+    w = [1.0 / max(1, int(r.get("horizon_steps", 1) or 1)) for r in rows]
     y_up = [int(r.get("up_hit", 0)) for r in rows]
     y_down = [int(r.get("down_hit", 0)) for r in rows]
-    pump = _fit_head(x, y_up)
-    dump = _fit_head(x, y_down)
+    pump = _fit_head(x, y_up, w)
+    dump = _fit_head(x, y_down, w)
     head_types = {pump["type"], dump["type"]}
     if "lightgbm" in head_types:
         model_type = "lightgbm_dual_v1"
@@ -87,6 +136,7 @@ def _fit_dual(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "model_type": model_type,
         "features": list(MODEL_FEATURES),
         "heads": {"pump": pump, "dump": dump},
+        "clip_bounds": bounds,
         "train_rows": len(rows),
     }
 

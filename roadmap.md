@@ -75,15 +75,19 @@ See `docs/audit_review_board_2026-07.md` for the full institutional audit.
       mainnet data over a rule-based universe; read purged out-of-sample PR-AUC;
       declare a kill criterion up front. *Not a code task — needs real collection.*
 
-### Sprint 2 — statistical validity & robustness
-- [ ] Q3 embargo + de-overlap / uniqueness weights for overlapping events.
-- [ ] Q4 per-regime evaluation (trend/range/high-vol/low-vol).
-- [ ] Q5 decouple the label threshold from the volatility feature.
-- [ ] M1 coherent pump/dump/none probability semantics (3-class or joint calibration).
-- [ ] M2 class-imbalance handling (weights / precision-oriented objective).
-- [ ] M3/M4/M5 feature hygiene (correlation prune, winsorization, rolling recalibration).
-- [ ] T2 model the 1-bar execution lag in the backtest.
-- [ ] A4 async write buffering · A5 config content-hashing · A6 push observability.
+### Sprint 2 — statistical validity & robustness · **code done**
+- [x] Q3 uniqueness sample weights (1/horizon) for overlapping event windows.
+- [x] Q4 per-regime evaluation (trend/range × high/low vol) in verbose eval.
+- [x] Q5 label threshold lagged one bar (decoupled from the current bar's ret_1).
+- [x] M1 coherent probabilities: joint normalization, p_none exposed in signals.
+- [x] M2 class imbalance: scale_pos_weight (LightGBM) / balanced logreg fallback.
+- [x] M4 winsorization: train-time clip bounds stored in the model, applied at inference.
+- [x] T2 1-bar execution lag in the backtest (decision bar i → entry/outcome bar i+1).
+- [x] A4 buffered WS writer (queue + batch flush off the read loop).
+- [x] A5 sha256 of all configs embedded in every artifact manifest.
+- [x] A6 push alert on overall_ok flip (Telegram text via report run).
+- [ ] M3 correlation prune / permutation importance · M5 rolling recalibration cadence
+      (deferred: needs real-data volume to be meaningful).
 
 ### Sprint 3 — market realism & scale
 - [ ] T1 depth-aware fills + capacity in the backtest (collect L2).

@@ -46,11 +46,27 @@ def _lgb_booster(head: dict[str, Any]) -> Any:
     return booster
 
 
-def _linear_logit(head: dict[str, Any], feature_row: dict[str, Any]) -> float:
+def _clip_value(model: dict[str, Any], name: str, value: float) -> float:
+    bounds = model.get("clip_bounds")
+    if isinstance(bounds, dict) and name in bounds:
+        lo, hi = bounds[name]
+        return min(float(hi), max(float(lo), value))
+    return value
+
+
+def _clipped_vector(model: dict[str, Any], feature_row: dict[str, Any]) -> list[float]:
+    """Feature vector with the train-time winsorization bounds applied, so
+    inference sees the same value ranges the model was fitted on (audit M4)."""
+    names = list(model.get("features") or MODEL_FEATURES)
+    vec = feature_vector(feature_row, names)
+    return [_clip_value(model, name, v) for name, v in zip(names, vec)]
+
+
+def _linear_logit(model: dict[str, Any], head: dict[str, Any], feature_row: dict[str, Any]) -> float:
     w = head.get("weights", {})
     z = float(head.get("bias", 0.0))
     for name, weight in w.items():
-        z += float(weight) * float(feature_row.get(name, 0.0) or 0.0)
+        z += float(weight) * _clip_value(model, name, float(feature_row.get(name, 0.0) or 0.0))
     return z
 
 
@@ -61,11 +77,11 @@ def infer_row_prob(model: dict[str, Any], feature_row: dict[str, Any], target: s
     if head_type == "constant":
         return min(1.0, max(0.0, float(head["prob"])))
     if head_type == "lightgbm":
-        vec = feature_vector(feature_row, model.get("features"))
+        vec = _clipped_vector(model, feature_row)
         p = float(_lgb_booster(head).predict([vec])[0])
         return min(1.0, max(0.0, p))
     # "logreg" and legacy linear heads share the same formula
-    return _sigmoid(_linear_logit(head, feature_row))
+    return _sigmoid(_linear_logit(model, head, feature_row))
 
 
 def infer_raw_prob(model: dict[str, Any], ret_1: float, vol_z_20: float, target: str = "pump") -> float:
@@ -82,8 +98,11 @@ def feature_contributions(model: dict[str, Any], feature_row: dict[str, Any], ta
         return {}
     if head_type == "lightgbm":
         names = list(model.get("features") or MODEL_FEATURES)
-        vec = feature_vector(feature_row, names)
+        vec = _clipped_vector(model, feature_row)
         contribs = _lgb_booster(head).predict([vec], pred_contrib=True)[0]
         return {name: float(c) for name, c in zip(names, contribs)}
     w = head.get("weights", {})
-    return {name: float(weight) * float(feature_row.get(name, 0.0) or 0.0) for name, weight in w.items()}
+    return {
+        name: float(weight) * _clip_value(model, name, float(feature_row.get(name, 0.0) or 0.0))
+        for name, weight in w.items()
+    }

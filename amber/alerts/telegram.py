@@ -27,7 +27,25 @@ def send_telegram_alert(
     timeout: float = 10.0,
     client: object | None = None,
 ) -> bool:
-    """Deliver an alert via the Telegram Bot API. Returns True on success.
+    """Deliver a signal alert via the Telegram Bot API. Returns True on success."""
+    return send_telegram_text(
+        f"AMBER {signal.symbol}\n{to_human_explanation(signal)}",
+        bot_token=bot_token,
+        chat_id=chat_id,
+        timeout=timeout,
+        client=client,
+    )
+
+
+def send_telegram_text(
+    text: str,
+    bot_token: str | None = None,
+    chat_id: str | None = None,
+    *,
+    timeout: float = 10.0,
+    client: object | None = None,
+) -> bool:
+    """Deliver a plain-text message (used for ops/health pushes, audit A6).
 
     Credentials come from arguments or the AMBER_TG_TOKEN / AMBER_TG_CHAT
     environment variables — never from code or config files.
@@ -43,7 +61,6 @@ def send_telegram_alert(
             return False
         client = httpx.Client(timeout=timeout)
 
-    text = f"AMBER {signal.symbol}\n{to_human_explanation(signal)}"
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     for attempt in range(1, _RETRIES + 1):
         try:

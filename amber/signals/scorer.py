@@ -47,6 +47,16 @@ def calibrated_prob(raw: float, calibration: dict[str, Any]) -> float:
     return max(0.0, min(1.0, p))
 
 
+def coherent_pump_dump(up: float, down: float) -> tuple[float, float]:
+    """Jointly normalize independently-calibrated heads so (p_up, p_down, p_none)
+    forms a valid distribution: when p_up + p_down > 1 both are scaled down
+    proportionally, otherwise the remainder is P(no event) (audit M1)."""
+    total = up + down
+    if total > 1.0 and total > 0:
+        return up / total, down / total
+    return up, down
+
+
 def calibrated_prob_for_target(raw: float, calibration: dict[str, Any], target: str) -> float:
     if calibration.get("method") == "multi_head":
         heads = calibration.get("heads", {})
@@ -90,6 +100,7 @@ def score_signal(
 
     up_cal = calibrated_prob_for_target(up_raw, calibration=calib, target="pump")
     down_cal = calibrated_prob_for_target(down_raw, calibration=calib, target="dump")
+    up_cal, down_cal = coherent_pump_dump(up_cal, down_cal)
 
     directional = up_cal - down_cal
 
@@ -120,7 +131,14 @@ def score_signal(
         prob_up_calibrated=up_cal,
         prob_down_calibrated=down_cal,
         regime="unknown",
-        market_context={"obs": feature_row.get("obs", 0), "mid_price": feature_row.get("mid_price", 0.0), "bid": feature_row.get("bid", feature_row.get("mid_price", 0.0)), "ask": feature_row.get("ask", feature_row.get("mid_price", 0.0)), "spread_bps": feature_row.get("spread_bps", 0.0)},
+        market_context={
+            "obs": feature_row.get("obs", 0),
+            "mid_price": feature_row.get("mid_price", 0.0),
+            "bid": feature_row.get("bid", feature_row.get("mid_price", 0.0)),
+            "ask": feature_row.get("ask", feature_row.get("mid_price", 0.0)),
+            "spread_bps": feature_row.get("spread_bps", 0.0),
+            "p_none": max(0.0, 1.0 - up_cal - down_cal),
+        },
         explanation=explanation,
         model_version=model.get("model_type", "unknown"),
         config_version=config_version,

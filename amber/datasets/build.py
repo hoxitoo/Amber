@@ -49,7 +49,10 @@ def _adaptive_threshold(
     floor: float,
     cap: float,
 ) -> float:
-    vol = _rolling_vol(ret_1, end_idx=idx, window=window)
+    # The volatility window ends at idx-1: the current bar's ret_1 is a model
+    # feature, and letting it also define the label threshold couples target to
+    # input (audit Q5). Lagging by one bar removes the direct coupling.
+    vol = _rolling_vol(ret_1, end_idx=max(0, idx - 1), window=window)
     return max(floor, min(cap, k * vol))
 
 

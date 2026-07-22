@@ -84,9 +84,15 @@ def _signal_replay(
     cost: float,
 ) -> tuple[list[float], dict[str, int], dict[str, Any]]:
     """Model-driven mode: trade only where calibrated probabilities pass the
-    real threshold chain; one open trade per symbol at a time."""
+    real threshold chain; one open trade per symbol at a time.
+
+    Execution realism (audit T2): the decision is made on bar i, but the entry
+    is booked from bar i+1 — live you cannot fill at the close of the bar whose
+    features you just observed. The outcome therefore comes from the *next*
+    row's forward window.
+    """
     from amber.models.infer import infer_row_prob
-    from amber.signals.scorer import calibrated_prob_for_target
+    from amber.signals.scorer import calibrated_prob_for_target, coherent_pump_dump
 
     up_min = float(thresholds.get("pump_prob_calibrated_min", 0.65))
     down_min = float(thresholds.get("dump_prob_calibrated_min", 0.65))
@@ -97,10 +103,35 @@ def _signal_replay(
     counts = {"TP": 0, "SL": 0, "Timeout": 0}
     directions = {"pump": 0, "dump": 0}
     open_until: dict[str, int] = {}  # symbol -> countdown of remaining candles
+    pending: dict[str, str] = {}  # symbol -> direction decided on the previous bar
     evaluated = 0
 
     for r in rows:
         symbol = str(r.get("symbol", ""))
+
+        if symbol in pending:
+            # Entry at this bar; the outcome is this row's forward window.
+            direction = pending.pop(symbol)
+            up = int(r.get("up_hit", 0))
+            down = int(r.get("down_hit", 0))
+            target_up = float(r.get("up_pct", 0.002))
+            target_down = float(r.get("down_pct", 0.002))
+            hit, miss = (up, down) if direction == "pump" else (down, up)
+            gain, loss = (target_up, target_down) if direction == "pump" else (target_down, target_up)
+            if hit == 1:
+                pnl = gain - cost
+                counts["TP"] += 1
+            elif miss == 1:
+                pnl = -loss - cost
+                counts["SL"] += 1
+            else:
+                pnl = -cost
+                counts["Timeout"] += 1
+            directions[direction] += 1
+            pnls.append(pnl)
+            open_until[symbol] = int(r.get("horizon_steps", 0) or 0)
+            continue
+
         if open_until.get(symbol, 0) > 0:
             open_until[symbol] -= 1
             continue
@@ -111,47 +142,16 @@ def _signal_replay(
 
         up_cal = calibrated_prob_for_target(infer_row_prob(model, r, target="pump"), calibration, target="pump")
         down_cal = calibrated_prob_for_target(infer_row_prob(model, r, target="dump"), calibration, target="dump")
+        up_cal, down_cal = coherent_pump_dump(up_cal, down_cal)
 
-        direction: str | None = None
         if up_cal >= up_min and (up_cal - down_cal) >= dir_min:
-            direction = "pump"
+            pending[symbol] = "pump"
         elif down_cal >= down_min and (down_cal - up_cal) >= dir_min:
-            direction = "dump"
-        if direction is None:
-            continue
-
-        up = int(r.get("up_hit", 0))
-        down = int(r.get("down_hit", 0))
-        target_up = float(r.get("up_pct", 0.002))
-        target_down = float(r.get("down_pct", 0.002))
-
-        if direction == "pump":
-            if up == 1:
-                pnl = target_up - cost
-                counts["TP"] += 1
-            elif down == 1:
-                pnl = -target_down - cost
-                counts["SL"] += 1
-            else:
-                pnl = -cost
-                counts["Timeout"] += 1
-        else:
-            if down == 1:
-                pnl = target_down - cost
-                counts["TP"] += 1
-            elif up == 1:
-                pnl = -target_up - cost
-                counts["SL"] += 1
-            else:
-                pnl = -cost
-                counts["Timeout"] += 1
-
-        directions[direction] += 1
-        pnls.append(pnl)
-        open_until[symbol] = int(r.get("horizon_steps", 0) or 0)
+            pending[symbol] = "dump"
 
     extra = {
         "mode": "model_signals",
+        "entry_lag_bars": 1,
         "rows_evaluated": evaluated,
         "trades_pump": directions["pump"],
         "trades_dump": directions["dump"],

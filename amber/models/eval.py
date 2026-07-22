@@ -45,6 +45,50 @@ def _safe_pr_auc(y: list[int], probs: list[float]) -> float | None:
         return None
 
 
+def _median(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    s = sorted(values)
+    mid = len(s) // 2
+    return s[mid] if len(s) % 2 else 0.5 * (s[mid - 1] + s[mid])
+
+
+def regime_metrics(rows: list[dict[str, Any]], probs_up: list[float], y_up: list[int]) -> dict[str, dict[str, float]]:
+    """Per-regime performance (audit Q4): trend/range × high/low volatility.
+
+    Regimes are defined relative to the evaluation window's own medians —
+    |ret_60| above median ⇒ trending, bb_width_20 above median ⇒ high vol — so
+    the split is parameter-free and always yields populated buckets.
+    """
+    abs_ret = [abs(float(r.get("ret_60", 0.0) or 0.0)) for r in rows]
+    bw = [float(r.get("bb_width_20", 0.0) or 0.0) for r in rows]
+    med_ret, med_bw = _median(abs_ret), _median(bw)
+
+    buckets: dict[str, list[int]] = {}
+    for i in range(len(rows)):
+        trend = "trend" if abs_ret[i] > med_ret else "range"
+        vol = "hivol" if bw[i] > med_bw else "lovol"
+        buckets.setdefault(f"{trend}_{vol}", []).append(i)
+
+    out: dict[str, dict[str, float]] = {}
+    for name, idx in sorted(buckets.items()):
+        y = [y_up[i] for i in idx]
+        p = [probs_up[i] for i in idx]
+        base = sum(y) / len(y) if y else 0.0
+        metrics: dict[str, float] = {
+            "rows": float(len(idx)),
+            "base_rate_up": base,
+            "brier_up": sum((pi - yi) ** 2 for pi, yi in zip(p, y)) / len(y) if y else 0.0,
+        }
+        pr = _safe_pr_auc(y, p)
+        if pr is not None:
+            metrics["pr_auc_up"] = pr
+            if base > 0:
+                metrics["pr_auc_up_lift"] = pr / base
+        out[name] = metrics
+    return out
+
+
 def _reliability_curve(y: list[int], probs: list[float], bins: int = 10) -> list[dict[str, float]]:
     """Binned calibration: mean predicted prob vs observed frequency per bin."""
     buckets: list[dict[str, float]] = []
@@ -156,4 +200,8 @@ def evaluate_model_verbose(models_root: Path, datasets_root: Path, threshold: fl
             rows = test_rows
     p_up = [calibrated_prob_for_target(infer_row_prob(model, r, target="pump"), calibration, target="pump") for r in rows]
     y_up = [int(r.get("up_hit", 0)) for r in rows]
-    return {**metrics, "reliability_up": _reliability_curve(y_up, p_up)}
+    return {
+        **metrics,
+        "reliability_up": _reliability_curve(y_up, p_up),
+        "regimes": regime_metrics(rows, p_up, y_up),
+    }
