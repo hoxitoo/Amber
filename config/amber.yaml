@@ -26,6 +26,8 @@ signal:
   min_dollar_volume: 0.0
 scanner:
   interval_sec: 60
+pipeline:
+  loop_sec: 60   # how often the auto-pipeline runs normalize + features
 alerts:
   channels:
   - console

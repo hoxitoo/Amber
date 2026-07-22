@@ -177,8 +177,9 @@ def set_symbols(project_root: Path, symbols: list[str]) -> list[str]:
 
 # Command registry used by the dashboard control panel.
 SERVICES: dict[str, dict[str, Any]] = {
-    "ws_collector": {"label": "WS-коллектор", "argv": ["scripts/run_ws_collector.py"]},
-    "scanner": {"label": "Сканер (loop)", "argv": ["scripts/run_scanner.py", "--loop"]},
+    "ws_collector": {"label": "WS-коллектор (сбор сырых данных)", "argv": ["scripts/run_ws_collector.py"]},
+    "pipeline": {"label": "Авто-конвейер (normalize + features)", "argv": ["scripts/run_pipeline_loop.py"]},
+    "scanner": {"label": "Сканер (сигналы, loop)", "argv": ["scripts/run_scanner.py", "--loop"]},
 }
 
 PIPELINE_STEPS: list[dict[str, Any]] = [
