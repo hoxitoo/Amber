@@ -17,6 +17,7 @@ exchange:
     testnet: false
     ws_url: wss://stream.bybit.com/v5/public/linear
     rest_url: https://api.bybit.com
+    backfill_limit: 1000   # REST klines per symbol per backfill (Bybit max 1000 ≈ 16h of 1m history)
     symbols:
     - BTCUSDT
     - ETHUSDT
@@ -27,7 +28,8 @@ signal:
 scanner:
   interval_sec: 60
 pipeline:
-  loop_sec: 60   # how often the auto-pipeline runs normalize + features
+  loop_sec: 60      # how often the auto-pipeline runs normalize + features
+  retrain_min: 60   # how often it rebuilds the dataset + retrains (0 = off)
 alerts:
   channels:
   - console
