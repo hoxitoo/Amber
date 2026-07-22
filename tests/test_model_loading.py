@@ -14,6 +14,14 @@ class TestModelLoading(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "No model_\\* directories found"):
                 load_latest_model(Path(td))
 
+    def test_load_latest_model_raises_valueerror_when_dir_absent(self):
+        # models_root does not exist at all (fresh install before any training):
+        # must raise ValueError, not FileNotFoundError, so the scanner can catch it.
+        with tempfile.TemporaryDirectory() as td:
+            missing = Path(td) / "data" / "models"
+            with self.assertRaises(ValueError):
+                load_latest_model(missing)
+
     def test_score_signal_falls_back_when_calibration_broken(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

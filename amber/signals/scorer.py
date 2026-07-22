@@ -11,6 +11,8 @@ from amber.models.infer import feature_contributions, infer_row_prob, load_lates
 
 
 def _load_latest_calibration(models_root: Path) -> dict[str, Any]:
+    if not models_root.exists():
+        return {"method": "identity"}
     calib_dirs = sorted([p for p in models_root.iterdir() if p.is_dir() and p.name.startswith("calib_")])
     if not calib_dirs:
         return {"method": "identity"}

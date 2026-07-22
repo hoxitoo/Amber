@@ -77,8 +77,8 @@ def scan_once(
 
     try:
         model = load_latest_model(models_root)
-    except ValueError:
-        logger.warning("no trained model found under %s; scan skipped", models_root)
+    except (ValueError, FileNotFoundError, OSError):
+        logger.warning("no trained model yet under %s; waiting (run training first)", models_root)
         return 0
     calibration = _load_latest_calibration(models_root)
 
