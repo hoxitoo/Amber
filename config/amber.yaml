@@ -22,6 +22,31 @@ exchange:
     symbols:
     - BTCUSDT
     - ETHUSDT
+    - SOLUSDT
+    - HYPEUSDT
+    - XRPUSDT
+    - BANKUSDT
+    - DEXEUSDT
+    - SOXLUSDT
+    - ZECUSDT
+    - XAUUSDT
+    - SNDKUSDT
+    - ONDOUSDT
+    - DOGEUSDT
+    - ENAUSDT
+    - 1000PEPEUSDT
+    - SUIUSDT
+    - LINKUSDT
+    - GRAMUSDT
+    - PUMPFUNUSDT
+    - LTCUSDT
+    - BNBUSDT
+    - AVAXUSDT
+    - FARTCOINUSDT
+    - STRKUSDT
+    - SANDUSDT
+    - UAIUSDT
+    - BTWUSDT
 signal:
   schema_version: v1
   top_k_universe: 20
