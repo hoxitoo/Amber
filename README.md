@@ -100,4 +100,10 @@ Set credentials via environment (never in config/code):
 1. Target symbol universe (recommended: top 20–50 liquid USDT-perpetuals) in `config/amber.yaml`.
 2. VPS host; deploy per `deploy/README.md`.
 3. Telegram bot token / chat id for production alerts (env vars above).
-4. Acceptance thresholds for the promotion gate (precision floor, spread/cooldown/concurrency limits) in `config/thresholds.yaml`.
+4. Acceptance thresholds for the promotion gate in `config/thresholds.yaml`. The
+   signal gate is **base-rate-relative** (audit 2026-07 B3): a signal fires when
+   `prob_calibrated >= max(prob_abs_floor, prob_lift_min * base_rate)`, because a
+   fixed absolute cut (e.g. 0.65) is unreachable for a well-calibrated rare-event
+   head and would never fire. Tune `prob_lift_min` / `prob_abs_floor` for the
+   precision/frequency trade-off; the same operating point is used by the live
+   scanner and the promotion-gate backtest. See `docs/audit_2026-07_ml_review.md`.

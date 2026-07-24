@@ -20,6 +20,30 @@ def _require_storage_key(storage: dict[str, str], key: str) -> Path:
     return Path(value)
 
 
+def _load_thresholds(storage: dict[str, str]) -> dict[str, Any]:
+    """Read config/thresholds.yaml by walking up from a storage path.
+
+    Returns the `thresholds` mapping (or {} if not found) so the report backtest
+    replays through the same operating thresholds the live scanner uses.
+    """
+    anchor = storage.get("raw_dir") or storage.get("logs_dir") or storage.get("models_dir")
+    if not anchor:
+        return {}
+    here = Path(anchor).resolve()
+    for parent in [here, *here.parents]:
+        cand = parent / "config" / "thresholds.yaml"
+        if cand.is_file():
+            try:
+                import yaml
+
+                data = yaml.safe_load(cand.read_text(encoding="utf-8")) or {}
+            except Exception:
+                return {}
+            thr = data.get("thresholds", {})
+            return thr if isinstance(thr, dict) else {}
+    return {}
+
+
 
 
 def _has_model_artifact(models_dir: Path) -> bool:
@@ -35,11 +59,19 @@ def _latest_eval_metrics(logs_dir: Path) -> tuple[dict[str, float], float | None
     path = logs_dir / "metrics.jsonl"
     if not path.exists():
         return {}, None
+    # The first four keys gate readiness (see `_model_eval_required_keys`); the
+    # PR-AUC / lift keys are display-only for the dashboard. They were previously
+    # filtered out here, so the "Модель" tab always showed PR-AUC as "—" even
+    # when eval had computed and emitted them.
     wanted = {
         "model_precision_up_at_threshold",
         "model_precision_down_at_threshold",
         "model_brier_up_cal",
         "model_brier_down_cal",
+        "model_pr_auc_up_cal",
+        "model_pr_auc_down_cal",
+        "model_pr_auc_up_lift",
+        "model_pr_auc_down_lift",
     }
     latest: dict[str, tuple[datetime, float]] = {}
     has_real_ts = False
@@ -170,9 +202,12 @@ def build_system_report(
     backtest_ok = True
     try:
         # Prefer the model-driven replay; fall back to the label replay when no
-        # trained model exists yet.
+        # trained model exists yet. The promotion-gate replay must use the SAME
+        # operating thresholds the live scanner uses, otherwise the dashboard's
+        # trade count is computed against hardcoded defaults and never matches
+        # the deployed gate.
         try:
-            backtest = event_backtest(datasets_dir, models_dir)
+            backtest = event_backtest(datasets_dir, models_dir, thresholds=_load_thresholds(storage))
         except Exception:
             backtest = event_backtest(datasets_dir)
     except Exception as exc:  # pragma: no cover - safe runtime fallback

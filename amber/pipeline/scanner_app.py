@@ -13,7 +13,7 @@ from amber.common.locks import AlreadyRunning, SingleInstanceLock
 from amber.common.logging import setup_logging
 from amber.common.types import SignalV1
 from amber.models.infer import load_latest_model
-from amber.signals.filters import SignalGate, passes_thresholds
+from amber.signals.filters import SignalGate, base_rate_for, effective_prob_min, passes_thresholds
 from amber.signals.scorer import _load_latest_calibration, score_signal
 from amber.signals.universe import select_universe
 from amber.storage.state_store import StateStore
@@ -82,6 +82,12 @@ def scan_once(
         return 0
     calibration = _load_latest_calibration(models_root)
 
+    # Base-rate-relative operating thresholds (audit B3): a well-calibrated head
+    # for a rare event rarely exceeds a fixed 0.65, so the absolute cut would
+    # never fire. Derive the cut from the head's own base rate instead.
+    up_min = effective_prob_min(thresholds, base_rate_for(model, "pump"), absolute_key="pump_prob_calibrated_min")
+    down_min = effective_prob_min(thresholds, base_rate_for(model, "dump"), absolute_key="dump_prob_calibrated_min")
+
     feature_rows = _read_latest_feature_rows(features_root, allowed_symbols=universe)
     emitted = 0
     for row in feature_rows:
@@ -98,8 +104,8 @@ def scan_once(
         )
         if passes_thresholds(
             signal,
-            up_min=float(thresholds["pump_prob_calibrated_min"]),
-            down_min=float(thresholds["dump_prob_calibrated_min"]),
+            up_min=up_min,
+            down_min=down_min,
             directional_min=float(thresholds.get("directional_score_min", 0.2)),
             spread_max_bps=float(thresholds.get("spread_bps_max", 30.0)),
         ) and gate.allow(signal):

@@ -1,9 +1,16 @@
-version: v2
+version: v3
 thresholds:
-  pump_prob_calibrated_min: 0.65
-  dump_prob_calibrated_min: 0.65
-  directional_score_min: 0.20
+  # Base-rate-relative operating point (audit 2026-07 B3). A well-calibrated head
+  # for a rare event rarely exceeds a fixed absolute probability, so an absolute
+  # cut like 0.65 never fires. Instead a signal must be BOTH above an absolute
+  # floor AND a meaningful multiple over the head's own base rate.
+  prob_lift_min: 2.0      # calibrated prob >= 2x the head's base rate
+  prob_abs_floor: 0.12    # ...and never below this absolute calibrated prob
+  directional_score_min: 0.05   # |p_up - p_down| conviction (was 0.20)
   spread_bps_max: 30.0
   min_liquidity_score: 0.30
   cooldown_sec: 90
   concurrent_limit: 5
+  # Legacy absolute cuts — used only if prob_lift_min is removed above.
+  pump_prob_calibrated_min: 0.65
+  dump_prob_calibrated_min: 0.65

@@ -144,6 +144,11 @@ def psi_from_quantile_reference(edges: list[float], live: list[float], eps: floa
     n_bins = len(edges) - 1
     if n_bins < 1 or not live:
         return 0.0
+    # A degenerate reference grid (all edges equal) means the train feature was
+    # constant; PSI against a point mass is undefined and blows up to ~12. Treat
+    # it as "no measurable drift" rather than a false alarm (audit B4).
+    if edges[-1] <= edges[0]:
+        return 0.0
     counts = [0] * n_bins
     for v in live:
         idx = bisect_right(edges, v) - 1

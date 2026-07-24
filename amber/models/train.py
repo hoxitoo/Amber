@@ -166,6 +166,15 @@ def _feature_quantiles(rows: list[dict[str, Any]], n_bins: int = 10) -> dict[str
         values = sorted(float(r.get(name, 0.0) or 0.0) for r in rows)
         if not values:
             continue
+        # A feature that is (near-)constant in the train segment has no usable
+        # reference distribution: any live variation would collapse into one bin
+        # and yield a spuriously huge PSI (~12), a permanent false "high drift"
+        # alarm. This happens for microstructure/order-flow features while the
+        # train window is still dominated by REST backfill (which has no bid/ask,
+        # OI or taker history). Skip them; once live data fills the window a later
+        # retrain restores a real reference. See audit 2026-07 finding B4.
+        if values[-1] <= values[0]:
+            continue
         edges = [values[min(len(values) - 1, int(len(values) * i / n_bins))] for i in range(n_bins + 1)]
         edges[0] = values[0]
         edges[-1] = values[-1]

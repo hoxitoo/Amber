@@ -92,10 +92,13 @@ def _signal_replay(
     row's forward window.
     """
     from amber.models.infer import infer_row_prob
+    from amber.signals.filters import base_rate_for, effective_prob_min
     from amber.signals.scorer import calibrated_prob_for_target, coherent_pump_dump
 
-    up_min = float(thresholds.get("pump_prob_calibrated_min", 0.65))
-    down_min = float(thresholds.get("dump_prob_calibrated_min", 0.65))
+    # Same operating-threshold logic as the live scanner (audit B3): base-rate
+    # relative when `prob_lift_min` is set, else the legacy absolute cut.
+    up_min = effective_prob_min(thresholds, base_rate_for(model, "pump"), absolute_key="pump_prob_calibrated_min")
+    down_min = effective_prob_min(thresholds, base_rate_for(model, "dump"), absolute_key="dump_prob_calibrated_min")
     dir_min = float(thresholds.get("directional_score_min", 0.2))
     spread_max = float(thresholds.get("spread_bps_max", 30.0))
 
