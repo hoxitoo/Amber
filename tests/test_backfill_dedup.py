@@ -29,11 +29,13 @@ class _FakeClient:
         )
 
     def get_klines(self, symbol, *, interval="1", limit=200, **kw):
-        # include one extra "open" candle at the end (collector drops it)
+        # include one extra "open" candle at the end (collector drops it).
+        # Closes vary bar-to-bar so the price path is real (not flat).
         out = []
         for i in range(self.n + 1):
             ts = self.end_ts - (self.n - i) * 60_000
-            out.append(Candle(ts=ts, symbol=symbol, tf="1m", open=100, high=101, low=99, close=100.5, volume=10))
+            close = 100.0 + (i % 7) * 0.5  # oscillating, spans well past a 0.3% barrier
+            out.append(Candle(ts=ts, symbol=symbol, tf="1m", open=100, high=close + 0.2, low=close - 0.2, close=close, volume=10))
         return out
 
 
@@ -74,6 +76,31 @@ class TestBackfillDedup(unittest.TestCase):
             # no duplicates
             self.assertEqual(len(all_ts), len(set(all_ts)))
             self.assertGreater(len(all_ts), 150)
+
+    def test_backfill_prices_track_candle_close_not_flat_snapshot(self):
+        """Regression: a live ticker snapshot must NOT be stamped onto every
+        historical candle. If it were, bid==ask across the whole backfill and
+        mid_price would be constant, flattening the label path and collapsing
+        the model to a constant prior (constant_dual_v1, zero signals)."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            raw_root = root / "raw"
+            state = StateStore(root / "state")
+            sink = ParquetSink(raw_root)
+
+            now = 1_700_000_000_000 + 200 * 60_000
+            client = _FakeClient("BTCUSDT", end_ts=now + 60_000, n=200)
+            collect_rest_backfill(client, sink, state, ["BTCUSDT"], limit=200, raw_root=raw_root)
+
+            path = raw_root / "normalized" / "BTCUSDT" / "part-000.jsonl"
+            rows = [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines()]
+            # bid/ask must follow each candle's close, so mid_price varies
+            mids = {(r["bid"] + r["ask"]) / 2.0 for r in rows}
+            self.assertGreater(len(mids), 1, "backfill mid_price is flat — snapshot was stamped onto history")
+            # and each row's bid/ask equals its own close (no external snapshot)
+            for r in rows:
+                self.assertEqual(r["bid"], r["close"])
+                self.assertEqual(r["ask"], r["close"])
 
     def test_features_recompute_matches_normalized_count(self):
         with tempfile.TemporaryDirectory() as td:

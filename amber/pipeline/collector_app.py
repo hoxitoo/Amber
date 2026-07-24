@@ -52,6 +52,15 @@ def collect_rest_backfill(
     stage advances that watermark to the present, so a forward-only skip would
     drop the entire backfill. Deduping on actual stored ts lets backfill fill the
     history *behind* the live stream without duplicating anything.
+
+    We deliberately do NOT stamp a live ticker/OI/funding snapshot onto these
+    historical candles. REST gives only OHLCV, not per-candle bid/ask/OI/funding
+    history — applying one current snapshot to every past candle makes bid/ask
+    (and thus `mid_price`) constant across the whole backfill, which flattens the
+    label price path so no ±barrier is ever hit and both model heads collapse to
+    a constant prior. Instead each backfill candle normalizes with bid=ask=close
+    (real per-candle price); the microstructure features stay 0 until the live WS
+    stream fills them in.
     """
     normalizer = BybitNormalizer()
     watermark = state.get(WATERMARK_STATE_KEY)
@@ -60,10 +69,6 @@ def collect_rest_backfill(
     emitted = 0
     for symbol in symbols:
         try:
-            ticker, oi, funding = client.get_market_snapshot(symbol)
-            normalizer.update_ticker(ticker)
-            normalizer.update_oi(oi)
-            normalizer.update_funding(funding)
             candles = client.get_klines(symbol, interval=interval, limit=limit)
         except Exception as exc:
             logger.error("collector failed for symbol=%s err=%s", symbol, exc)
