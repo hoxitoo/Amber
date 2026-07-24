@@ -52,27 +52,27 @@ class TestProcessManager(unittest.TestCase):
 
 
 class TestSetSymbols(unittest.TestCase):
-    def test_set_symbols_writes_config_and_backup(self):
+    def test_set_symbols_writes_local_override_not_tracked_file(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             cfg = root / "config"
             cfg.mkdir()
-            (cfg / "amber.yaml").write_text(
+            tracked = cfg / "amber.yaml"
+            tracked.write_text(
                 "exchange:\n  bybit:\n    testnet: false\n    symbols:\n    - BTCUSDT\n",
                 encoding="utf-8",
             )
+            before = tracked.read_text(encoding="utf-8")
+
             saved = C.set_symbols(root, ["btcusdt", " ethusdt ", "", "SOLUSDT"])
             self.assertEqual(saved, ["BTCUSDT", "ETHUSDT", "SOLUSDT"])
 
             import yaml
 
-            data = yaml.safe_load((cfg / "amber.yaml").read_text(encoding="utf-8"))
-            self.assertEqual(data["exchange"]["bybit"]["symbols"], ["BTCUSDT", "ETHUSDT", "SOLUSDT"])
-            # untouched keys preserved
-            self.assertEqual(data["exchange"]["bybit"]["testnet"], False)
-            # backup exists
-            self.assertTrue((cfg / "amber.yaml.bak").exists())
-            self.assertIn("BTCUSDT", (cfg / "amber.yaml.bak").read_text(encoding="utf-8"))
+            # tracked file is left untouched (no pull conflicts)
+            self.assertEqual(tracked.read_text(encoding="utf-8"), before)
+            local = yaml.safe_load((cfg / "amber.local.yaml").read_text(encoding="utf-8"))
+            self.assertEqual(local["exchange"]["bybit"]["symbols"], ["BTCUSDT", "ETHUSDT", "SOLUSDT"])
 
 
 if __name__ == "__main__":

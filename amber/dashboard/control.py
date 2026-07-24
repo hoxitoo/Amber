@@ -158,20 +158,23 @@ class ProcessManager:
 
 
 def set_symbols(project_root: Path, symbols: list[str]) -> list[str]:
-    """Update `exchange.bybit.symbols` in config/amber.yaml.
+    """Update the collected symbol universe.
 
-    A `.yaml.bak` backup is written first. Comments are not preserved (PyYAML
-    round-trip), which is acceptable for a UI-driven edit.
+    Written to `config/amber.local.yaml` (a gitignored override merged over the
+    tracked `config/amber.yaml` at load time), so editing symbols never conflicts
+    with `git pull` of the defaults.
     """
     import yaml
 
-    cfg_path = Path(project_root) / "config" / "amber.yaml"
     cleaned = [s.strip().upper() for s in symbols if s.strip()]
-    original = cfg_path.read_text(encoding="utf-8")
-    data = yaml.safe_load(original)
+    local_path = Path(project_root) / "config" / "amber.local.yaml"
+    data: dict = {}
+    if local_path.is_file():
+        loaded = yaml.safe_load(local_path.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict):
+            data = loaded
     data.setdefault("exchange", {}).setdefault("bybit", {})["symbols"] = cleaned
-    cfg_path.with_suffix(".yaml.bak").write_text(original, encoding="utf-8")
-    cfg_path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    local_path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
     return cleaned
 
 
