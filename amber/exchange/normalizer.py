@@ -50,7 +50,12 @@ class BybitNormalizer:
     def update_funding(self, funding: FundingRate) -> None:
         self.cache.funding[funding.symbol] = funding
 
-    def to_normalized(self, candle: Candle, is_synthetic: bool = False) -> NormalizedRow:
+    def to_normalized(
+        self,
+        candle: Candle,
+        is_synthetic: bool = False,
+        trades: dict[str, float] | None = None,
+    ) -> NormalizedRow:
         t = self.cache.tickers.get(candle.symbol)
         oi = self.cache.oi.get(candle.symbol)
         f = self.cache.funding.get(candle.symbol)
@@ -68,8 +73,37 @@ class BybitNormalizer:
             ask=t.ask if t else candle.close,
             oi=oi.oi if oi else 0.0,
             funding=f.funding if f else 0.0,
+            buy_volume=float(trades.get("buy", 0.0)) if trades else 0.0,
+            sell_volume=float(trades.get("sell", 0.0)) if trades else 0.0,
+            trade_count=int(trades.get("count", 0)) if trades else 0,
             is_synthetic=is_synthetic,
         )
+
+    @staticmethod
+    def trades_from_ws(payload: dict) -> list[tuple[str, int, str, float]]:
+        """Parse a Bybit v5 `publicTrade.*` payload into (symbol, ts, side, size).
+
+        `side` is the aggressor side ('Buy' = taker buy). Empty for other topics.
+        """
+        topic = str(payload.get("topic", ""))
+        if not topic.startswith("publicTrade."):
+            return []
+        data = payload.get("data")
+        if not isinstance(data, list):
+            return []
+        out: list[tuple[str, int, str, float]] = []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            try:
+                symbol = str(item["s"])
+                ts = int(item["T"])
+                side = str(item.get("S", ""))
+                size = float(item["v"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            out.append((symbol, ts, side, size))
+        return out
 
     @staticmethod
     def symbol_from_topic(topic: str) -> str | None:

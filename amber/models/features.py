@@ -28,6 +28,10 @@ MODEL_FEATURES: list[str] = [
     "dist_to_low_20",
     "breakout_up_20",
     "breakout_dn_20",
+    # taker order flow (aggressor imbalance / CVD — the trader's leading signal)
+    "taker_imbalance",
+    "cvd_norm_20",
+    "trade_count_z_20",
     # microstructure
     "spread_bps",
 ]

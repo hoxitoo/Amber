@@ -1,4 +1,4 @@
-version: v3
+version: v4
 features:
   # returns (short -> long context)
   - name: ret_1
@@ -22,5 +22,9 @@ features:
   - name: dist_to_low_20
   - name: breakout_up_20
   - name: breakout_dn_20
+  # taker order flow (aggressor imbalance / CVD)
+  - name: taker_imbalance
+  - name: cvd_norm_20
+  - name: trade_count_z_20
   # microstructure
   - name: spread_bps

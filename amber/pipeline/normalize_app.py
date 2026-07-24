@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 
 OFFSETS_STATE_KEY = "normalize_offsets"
 WATERMARK_STATE_KEY = "normalized_watermark"
+TRADE_BUCKETS_STATE_KEY = "trade_buckets"
+_MINUTE_MS = 60_000
+_BUCKET_PRUNE_MS = 30 * _MINUTE_MS  # drop trade buckets older than this vs the newest seen
 
 
 def _iter_jsonl_payloads(path: Path):
@@ -74,6 +77,12 @@ def normalize_ws_raw(raw_root: Path, state: StateStore) -> int:
     watermark = state.get(WATERMARK_STATE_KEY)
     last_ts: dict[str, int] = {k: int(v) for k, v in watermark.get("last_ts", {}).items()}
     last_row_by_symbol: dict[str, Any] = {}
+    # Persist per-minute taker-volume buckets so trades seen in one run still
+    # attach to a candle that only closes in a later run.
+    trade_buckets: dict[str, dict[str, float]] = {
+        k: dict(v) for k, v in state.get(TRADE_BUCKETS_STATE_KEY).items()
+    }
+    newest_minute = 0
 
     written = 0
     for file in sorted((raw_root / "ws_raw").glob("*/part-*.jsonl")):
@@ -86,10 +95,21 @@ def normalize_ws_raw(raw_root: Path, state: StateStore) -> int:
         for payload in payloads:
             if normalizer.update_from_ws_ticker(payload):
                 continue
+            trades = normalizer.trades_from_ws(payload)
+            if trades:
+                for tsym, tts, side, size in trades:
+                    minute = (tts // _MINUTE_MS) * _MINUTE_MS
+                    newest_minute = max(newest_minute, minute)
+                    bucket = trade_buckets.setdefault(f"{tsym}|{minute}", {"buy": 0.0, "sell": 0.0, "count": 0.0})
+                    bucket["buy" if side == "Buy" else "sell"] += size
+                    bucket["count"] += 1.0
+                continue
             for candle in normalizer.candles_from_ws(payload):
                 if candle.ts <= last_ts.get(symbol, -1):
                     continue
-                row = normalizer.to_normalized(candle)
+                candle_minute = (candle.ts // _MINUTE_MS) * _MINUTE_MS
+                agg = trade_buckets.pop(f"{candle.symbol}|{candle_minute}", None)
+                row = normalizer.to_normalized(candle, trades=agg)
                 last = last_row_by_symbol.get(symbol)
                 step_ms = step_ms_for_tf(row.tf)
                 if last is not None and row.ts - last.ts > step_ms:
@@ -102,8 +122,14 @@ def normalize_ws_raw(raw_root: Path, state: StateStore) -> int:
             sink.write_records(topic="normalized", symbol=symbol, records=out)
             written += len(out)
 
+    # Bound the bucket store: drop minutes far behind the newest trade seen.
+    if newest_minute:
+        cutoff = newest_minute - _BUCKET_PRUNE_MS
+        trade_buckets = {k: v for k, v in trade_buckets.items() if int(k.split("|")[1]) >= cutoff}
+
     state.set(OFFSETS_STATE_KEY, offsets)
     state.set(WATERMARK_STATE_KEY, {"last_ts": last_ts})
+    state.set(TRADE_BUCKETS_STATE_KEY, trade_buckets)
     return written
 
 

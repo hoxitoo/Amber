@@ -28,8 +28,12 @@ async def main() -> None:
     sink = ParquetSink(Path(cfg["storage"]["raw_dir"]))
 
     # Klines drive the candle series; tickers carry bid/ask, open interest and
-    # funding rate, which the normalizer merges into every candle row.
-    topics = [f"kline.1.{s}" for s in symbols] + [f"tickers.{s}" for s in symbols]
+    # funding rate; publicTrade carries taker aggressor flow (CVD/imbalance).
+    topics = (
+        [f"kline.1.{s}" for s in symbols]
+        + [f"tickers.{s}" for s in symbols]
+        + [f"publicTrade.{s}" for s in symbols]
+    )
 
     # Disk writes are batched off the WS read loop (audit A4): the handler only
     # enqueues, a writer task flushes by size/interval, so bursty markets can't

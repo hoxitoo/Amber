@@ -90,8 +90,10 @@ See `docs/audit_review_board_2026-07.md` for the full institutional audit.
       (deferred: needs real-data volume to be meaningful).
 
 ### Sprint 3 — market realism & scale
+- [~] T3 order-flow: taker aggressor imbalance / CVD from WS `publicTrade`
+      (`taker_imbalance`, `cvd_norm_20`, `trade_count_z_20`) — **done**;
+      order-book depth/imbalance (`orderbook`) and liquidations still pending.
 - [ ] T1 depth-aware fills + capacity in the backtest (collect L2).
-- [ ] T3 order-flow / liquidation / book-imbalance features (WS `publicTrade` + `orderbook`).
 - [ ] T4 wash/manipulated-volume filter · T5 contract-state (ST/delisting) awareness.
 - [ ] A1 Parquet partitioning · M6 artifact schema validation.
 

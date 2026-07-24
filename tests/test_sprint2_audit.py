@@ -29,7 +29,9 @@ class TestCoherentProbabilities(unittest.TestCase):
 class TestClipping(unittest.TestCase):
     def test_bounds_and_apply(self):
         # ret_1 is feature index 0; one extreme outlier must be clipped away
-        x = [[0.001 * i] + [0.0] * 17 for i in range(100)]
+        from amber.models.features import MODEL_FEATURES
+
+        x = [[0.001 * i] + [0.0] * (len(MODEL_FEATURES) - 1) for i in range(100)]
         x[50][0] = 999.0
         bounds = _clip_bounds(x)
         self.assertIn("ret_1", bounds)

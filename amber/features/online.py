@@ -19,6 +19,9 @@ class SymbolWindow:
     funding: deque[float] = field(default_factory=lambda: deque(maxlen=_MAXLEN))
     bid: deque[float] = field(default_factory=lambda: deque(maxlen=_MAXLEN))
     ask: deque[float] = field(default_factory=lambda: deque(maxlen=_MAXLEN))
+    buy_vol: deque[float] = field(default_factory=lambda: deque(maxlen=_MAXLEN))
+    sell_vol: deque[float] = field(default_factory=lambda: deque(maxlen=_MAXLEN))
+    trade_count: deque[float] = field(default_factory=lambda: deque(maxlen=_MAXLEN))
 
 
 def _std(values: list[float]) -> float:
@@ -65,6 +68,9 @@ class FeatureEngine:
         w.funding.append(funding)
         w.bid.append(bid)
         w.ask.append(ask)
+        w.buy_vol.append(float(row.get("buy_volume", 0.0)))
+        w.sell_vol.append(float(row.get("sell_volume", 0.0)))
+        w.trade_count.append(float(row.get("trade_count", 0.0)))
 
         return self._build_features(
             symbol=symbol,
@@ -142,6 +148,19 @@ class FeatureEngine:
         # --- open interest positioning --------------------------------------
         oi_roc_5 = (ois[-1] / ois[-6] - 1.0) if len(ois) >= 6 and ois[-6] != 0 else 0.0
 
+        # --- taker order flow (aggressor imbalance / CVD) -------------------
+        buys = list(w.buy_vol)
+        sells = list(w.sell_vol)
+        buy_cur = buys[-1] if buys else 0.0
+        sell_cur = sells[-1] if sells else 0.0
+        flow = buy_cur + sell_cur
+        taker_imbalance = ((buy_cur - sell_cur) / flow) if flow > 0 else 0.0
+        # net taker flow over the last 20 bars, normalized by total flow
+        net20 = sum(buys[-20:]) - sum(sells[-20:])
+        tot20 = sum(buys[-20:]) + sum(sells[-20:])
+        cvd_norm_20 = (net20 / tot20) if tot20 > 0 else 0.0
+        trade_count_z_20 = _z(w.trade_count, 20)
+
         # --- microstructure --------------------------------------------------
         mid_price = (w.bid[-1] + w.ask[-1]) / 2.0 if w.bid and w.ask else cur
         spread_bps = 0.0 if mid_price == 0 else ((w.ask[-1] - w.bid[-1]) / mid_price) * 10_000
@@ -171,6 +190,10 @@ class FeatureEngine:
             "dist_to_low_20": dist_to_low_20,
             "breakout_up_20": breakout_up_20,
             "breakout_dn_20": breakout_dn_20,
+            # taker order flow
+            "taker_imbalance": taker_imbalance,
+            "cvd_norm_20": cvd_norm_20,
+            "trade_count_z_20": trade_count_z_20,
             # microstructure / meta
             "mid_price": mid_price,
             "bid": w.bid[-1] if w.bid else mid_price,

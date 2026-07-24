@@ -47,4 +47,9 @@ class NormalizedRow(BaseModel):
     ask: float
     oi: float
     funding: float
+    # Taker order flow for the candle's minute (from publicTrade); 0 when no
+    # trade stream is available (e.g. REST backfill or a quiet minute).
+    buy_volume: float = Field(default=0.0)
+    sell_volume: float = Field(default=0.0)
+    trade_count: int = Field(default=0)
     is_synthetic: bool = Field(default=False)
