@@ -8,6 +8,7 @@ from typing import Any
 from amber.common.config import ConfigLoader
 from amber.common.locks import AlreadyRunning, SingleInstanceLock
 from amber.common.logging import setup_logging
+from amber.common.retention import cleanup_consumed_ws_raw
 from amber.exchange.normalizer import BybitNormalizer, gap_fill, step_ms_for_tf
 from amber.storage.parquet_sink import ParquetSink
 from amber.storage.state_store import StateStore
@@ -126,6 +127,9 @@ def normalize_ws_raw(raw_root: Path, state: StateStore) -> int:
     if newest_minute:
         cutoff = newest_minute - _BUCKET_PRUNE_MS
         trade_buckets = {k: v for k, v in trade_buckets.items() if int(k.split("|")[1]) >= cutoff}
+
+    # Reclaim disk: delete rotated ws_raw files already fully consumed.
+    cleanup_consumed_ws_raw(raw_root, offsets)
 
     state.set(OFFSETS_STATE_KEY, offsets)
     state.set(WATERMARK_STATE_KEY, {"last_ts": last_ts})

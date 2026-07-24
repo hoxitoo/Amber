@@ -10,6 +10,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from amber.common.retention import prune_run_dirs
 from amber.models.calibrate import calibrate_model
 from amber.models.dataset_io import load_latest_dataset_rows
 from amber.models.eval import evaluate_model
@@ -93,4 +94,11 @@ def run_training(
     for key in _METRIC_KEYS:
         if key in ev:
             emit_metrics(logs_root, f"model_{key}", ev[key], {"model_run_id": tr["run_id"]})
+
+    # Retention: hourly auto-retrain would otherwise pile up dataset/model dirs
+    # forever. Keep only the most recent runs.
+    keep = int(config.get("storage", {}).get("keep_runs", 5))
+    prune_run_dirs(datasets_root, "dataset_", keep)
+    prune_run_dirs(models_root, "model_", keep)
+    prune_run_dirs(models_root, "calib_", keep)
     return {"train": tr, "calibration": cal, "eval": ev}

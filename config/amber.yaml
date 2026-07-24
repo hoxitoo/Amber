@@ -6,6 +6,7 @@ run:
   log_level: INFO
 storage:
   root: data
+  keep_runs: 5   # how many dataset/model/calibration runs to retain on disk
   raw_dir: data/raw
   features_dir: data/features
   datasets_dir: data/datasets

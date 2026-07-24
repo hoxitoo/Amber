@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict
+from datetime import datetime, timezone
 import logging
 from pathlib import Path
 import sys
@@ -29,11 +30,12 @@ async def main() -> None:
 
     # Klines drive the candle series; tickers carry bid/ask, open interest and
     # funding rate; publicTrade carries taker aggressor flow (CVD/imbalance).
-    topics = (
-        [f"kline.1.{s}" for s in symbols]
-        + [f"tickers.{s}" for s in symbols]
-        + [f"publicTrade.{s}" for s in symbols]
-    )
+    # publicTrade is high-volume — disable it via collect_trades: false if disk
+    # is tight (order-flow features then stay 0).
+    collect_trades = bool(cfg["exchange"]["bybit"].get("collect_trades", True))
+    topics = [f"kline.1.{s}" for s in symbols] + [f"tickers.{s}" for s in symbols]
+    if collect_trades:
+        topics += [f"publicTrade.{s}" for s in symbols]
 
     # Disk writes are batched off the WS read loop (audit A4): the handler only
     # enqueues, a writer task flushes by size/interval, so bursty markets can't
@@ -52,8 +54,11 @@ async def main() -> None:
             topic = str(payload.get("topic", "unknown"))
             symbol = topic.split(".")[-1] if "." in topic else "unknown"
             by_symbol[symbol].append(payload)
+        # Rotate raw files hourly so the normalizer can delete consumed ones and
+        # ws_raw doesn't grow without bound (publicTrade is high-volume).
+        part = "part-" + datetime.now(timezone.utc).strftime("%Y%m%d%H")
         for symbol, records in by_symbol.items():
-            sink.write_records(topic="ws_raw", symbol=symbol, records=records)
+            sink.write_records(topic="ws_raw", symbol=symbol, records=records, part=part)
 
     async def writer() -> None:
         buffer: list[dict] = []

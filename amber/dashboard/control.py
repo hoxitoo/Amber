@@ -189,12 +189,13 @@ PIPELINE_STEPS: list[dict[str, Any]] = [
     {"key": "dataset", "label": "Датасет", "argv": ["scripts/build_dataset.py"]},
     {"key": "train", "label": "Обучение + калибровка + eval", "argv": ["scripts/train_model.py"]},
     {"key": "backtest", "label": "Бэктест", "argv": ["scripts/run_backtest.py"]},
+    {"key": "cleanup", "label": "🧹 Очистить диск", "argv": ["scripts/cleanup.py"]},
 ]
 
 # The one-click sequence. REST backfill runs first so a fresh install has enough
 # history to clear the warm-up threshold; it is idempotent (watermark dedup), so
-# re-running the cycle never duplicates data.
-FULL_CYCLE: list[dict[str, Any]] = list(PIPELINE_STEPS)
+# re-running the cycle never duplicates data. Cleanup is a standalone button.
+FULL_CYCLE: list[dict[str, Any]] = [s for s in PIPELINE_STEPS if s["key"] != "cleanup"]
 
 # Exit code the train step uses to signal "not enough data yet" (informational,
 # not a real failure).
