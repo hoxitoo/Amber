@@ -20,16 +20,11 @@ services:
     volumes:
       - amber-data:/app/data
 
-  normalize-features:
+  pipeline:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
-    command: >
-      sh -c 'while true; do
-        python scripts/run_normalize.py &&
-        python scripts/run_features.py;
-        sleep 60;
-      done'
+    command: python scripts/run_pipeline_loop.py
     restart: unless-stopped
     volumes:
       - amber-data:/app/data

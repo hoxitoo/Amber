@@ -1,0 +1,16 @@
+[Unit]
+Description=Amber auto-pipeline (normalize + features, periodic dataset rebuild + retrain)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=amber
+WorkingDirectory=/opt/amber
+ExecStart=/opt/amber/.venv/bin/python scripts/run_pipeline_loop.py
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
