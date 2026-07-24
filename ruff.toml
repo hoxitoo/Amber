@@ -1,0 +1,9 @@
+# Pinned lint config so local and CI agree regardless of ruff version drift.
+target-version = "py311"
+line-length = 120
+
+[lint]
+# Ruff's classic default set — deterministic across releases. Deliberately
+# excludes line-length (E501) and the opinionated refactor rules (FURB/SIM/RUF
+# preview) whose defaults change between ruff versions and broke CI.
+select = ["E4", "E7", "E9", "F"]
