@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from amber.common.config import ConfigLoader
 from amber.common.logging import setup_logging
 from amber.datasets.build import build_dataset_from_config
-from amber.pipeline import features_app, normalize_app
+from amber.pipeline import collector_app, features_app, normalize_app
 from amber.pipeline.train_app import NotEnoughData, run_training
 
 logger = logging.getLogger(__name__)
@@ -50,6 +50,14 @@ def main() -> None:
     interval = max(15, int(pipeline_cfg.get("loop_sec", 60)))
     retrain_min = int(pipeline_cfg.get("retrain_min", 60))
     logger.info("pipeline loop started interval=%ss retrain_min=%s", interval, retrain_min)
+
+    # Seed history on startup so a fresh box has enough candles to train within
+    # minutes instead of waiting ~1h for the WS stream. Idempotent (watermark
+    # dedup), so a restart never duplicates data.
+    try:
+        collector_app.main()
+    except Exception as exc:
+        logger.warning("startup backfill failed (will rely on WS stream): %s", exc)
 
     last_retrain = 0.0
     while True:
