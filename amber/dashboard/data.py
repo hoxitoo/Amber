@@ -35,10 +35,17 @@ def load_thresholds(project_root: Path) -> dict[str, Any]:
     return ConfigLoader(project_root).load_yaml("config/thresholds.yaml").get("thresholds", {})
 
 
-def storage_paths(config: dict[str, Any], project_root: Path) -> dict[str, str]:
-    """Absolute storage paths (config values are relative to the project root)."""
-    out: dict[str, str] = {}
+def storage_paths(config: dict[str, Any], project_root: Path) -> dict[str, Any]:
+    """Absolute storage paths (config values are relative to the project root).
+
+    Non-path entries in the storage section (e.g. `keep_runs: 5`) are passed
+    through untouched.
+    """
+    out: dict[str, Any] = {}
     for key, value in config.get("storage", {}).items():
+        if not isinstance(value, str):
+            out[key] = value
+            continue
         p = Path(value)
         out[key] = str(p if p.is_absolute() else project_root / p)
     return out
