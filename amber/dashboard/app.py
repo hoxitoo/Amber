@@ -377,7 +377,7 @@ with tab_symbol:
                         y=sig_y,
                         mode="markers",
                         marker={"size": 12, "symbol": "triangle-up", "color": "#E8A33D",
-                                "line": {"width": 1, "color": "#00000055"}},
+                                "line": {"width": 1, "color": "rgba(0,0,0,0.33)"}},
                         name="сигналы",
                         text=sig_txt,
                     )

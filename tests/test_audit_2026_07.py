@@ -88,5 +88,31 @@ class TestB1B2Reporting(unittest.TestCase):
             self.assertEqual(thr["prob_abs_floor"], 0.12)
 
 
+class TestB5DashboardSignalMarker(unittest.TestCase):
+    """B5: the 'По символу' chart crashed for any symbol that HAD signals because
+    the signal marker used an 8-digit RGBA hex ('#00000055'), which plotly
+    rejects for scatter.marker.line.color."""
+
+    def test_signal_marker_color_is_plotly_valid(self):
+        import plotly.graph_objects as go
+
+        # Must not raise ValueError (plotly validates on construction).
+        go.Scatter(
+            x=[1, 2],
+            y=[1.0, 2.0],
+            mode="markers",
+            marker={"size": 12, "symbol": "triangle-up", "color": "#E8A33D",
+                    "line": {"width": 1, "color": "rgba(0,0,0,0.33)"}},
+            name="сигналы",
+        )
+
+    def test_dashboard_uses_no_8_digit_hex_colors(self):
+        import re
+
+        src = Path(__file__).resolve().parents[1] / "amber" / "dashboard" / "app.py"
+        offenders = re.findall(r"#[0-9A-Fa-f]{8}\b", src.read_text(encoding="utf-8"))
+        self.assertEqual(offenders, [], f"plotly rejects 8-digit hex colors: {offenders}")
+
+
 if __name__ == "__main__":
     unittest.main()
