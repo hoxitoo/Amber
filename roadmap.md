@@ -1,6 +1,6 @@
 # Project Amber — Roadmap
 
-_Last updated: 2026-07-21_
+_Last updated: 2026-07-26_
 
 Amber is a local-first ML scanner for Bybit futures that predicts event
 probabilities (pump/dump) and emits alerts. Not an auto-trader.
@@ -96,6 +96,34 @@ See `docs/audit_review_board_2026-07.md` for the full institutional audit.
 - [ ] T1 depth-aware fills + capacity in the backtest (collect L2).
 - [ ] T4 wash/manipulated-volume filter · T5 contract-state (ST/delisting) awareness.
 - [ ] A1 Parquet partitioning · M6 artifact schema validation.
+
+### Sprint 4 — signal transparency & outcome tracking · **planned (not started)**
+
+Requested 2026-07-26. Make each signal self-explanatory and self-scoring: show
+how confident the model is, and later whether it was right.
+
+- [ ] **S4.1 — Per-signal confidence in the UI.** Surface the model's confidence
+      for every signal in the "Модель" tab signal list, e.g. `pump — уверенность
+      70%`. The number is the head's **calibrated** probability
+      (`prob_up_calibrated` / `prob_down_calibrated`), which the model already
+      produces — this item is primarily (a) displaying it clearly next to each
+      signal and (b) making the calibration trustworthy enough that "70%" really
+      means ~70% hit rate (reliability-curve check; recalibrate if the curve
+      drifts). Show the direction's own probability, and optionally `p_none`.
+      *Model-side note:* confidence is not a new model output — a well-calibrated
+      probability IS the confidence. The work is calibration quality + honest
+      display, not inventing a separate confidence score.
+- [ ] **S4.2 — Realized outcome per signal.** After a signal's horizon elapses,
+      resolve whether the predicted event actually happened (pump/dump hit vs
+      miss vs timeout) and show the verdict next to the signal (e.g. `dump →
+      сработал` / `не сработал` / `таймаут`). Persist the resolution so the
+      signal log becomes a track record.
+      *Infra that already exists to build on:* the quality monitor already
+      lag-joins `signals.jsonl` with realized `normalized` labels after the
+      horizon to compute rolling AUC over **confirmed** outcomes — S4.2 reuses
+      that join to stamp a per-signal hit/miss and expose it in the UI, plus a
+      running hit-rate summary (and, once volume allows, hit-rate broken down by
+      confidence bucket to validate S4.1's calibration end-to-end).
 
 ### Backlog
 - [ ] T6 cross-exchange lead/lag features · A7 feature-list relocation.
