@@ -95,6 +95,18 @@ def run_training(
         if key in ev:
             emit_metrics(logs_root, f"model_{key}", ev[key], {"model_run_id": tr["run_id"]})
 
+    # Publish the promotion-gate backtest here, where a full dataset load is
+    # expected, so the dashboard can render it without recomputing per page view.
+    try:
+        from amber.backtest.backtester import event_backtest
+        from amber.monitoring.reporting import _load_thresholds, save_backtest_result
+
+        storage_paths = {k: str(v) for k, v in config.get("storage", {}).items() if isinstance(v, str)}
+        bt = event_backtest(datasets_root, models_root, thresholds=_load_thresholds(storage_paths))
+        save_backtest_result(logs_root, bt)
+    except Exception as exc:  # a failed replay must not fail the retrain
+        logger.warning("backtest publish failed: %s", exc)
+
     # Retention: hourly auto-retrain would otherwise pile up dataset/model dirs
     # forever. Keep only the most recent runs.
     storage_cfg = config.get("storage", {})

@@ -139,7 +139,7 @@ with st.sidebar:
     st.markdown("## 🟡 Amber")
     st.caption("ML-сканер событий Bybit · pump/dump вероятности")
     st.markdown(f"<span style='font-size:12px;opacity:.7'>Проект: <code>{root}</code></span>", unsafe_allow_html=True)
-    if st.button("🔄 Обновить данные", use_container_width=True):
+    if st.button("🔄 Обновить данные", width="stretch"):
         st.cache_data.clear()
         st.rerun()
     st.caption("Кэш 15 сек — «Обновить» пересчитывает всё сразу.")
@@ -222,7 +222,7 @@ with tab_overview:
             )
         st.dataframe(
             pd.DataFrame(rows),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             column_config={
                 "P(pump)": st.column_config.ProgressColumn("P(pump)", min_value=0.0, max_value=1.0, format="%.3f"),
@@ -275,9 +275,11 @@ with tab_model:
         e3.metric("Precision↑@thr", _num(ev.get("model_precision_up_at_threshold")))
         e4.metric("Brier↑", _num(ev.get("model_brier_up_cal")))
 
-        _section("Бэктест", "promotion gate · вход с лагом 1 бар · test-сегмент")
+        _section("Бэктест", "promotion gate · вход с лагом 1 бар · test-сегмент · считается при переобучении")
         if bt.get("error"):
             st.warning(f"Бэктест недоступен: {bt['error']}")
+        elif bt.get("status") == "pending":
+            st.info("Бэктест ещё не считался — он выполняется при очередном переобучении модели.")
         else:
             b1, b2, b3, b4, b5 = st.columns(5)
             b1.metric("Сделок", _num(bt.get("signals"), "{:.0f}", "0"))
@@ -308,7 +310,7 @@ with tab_data:
                 "last_update_min": "обновлено",
             }
         )
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df, width="stretch", hide_index=True)
 
     _section("Дрифт признаков", "PSI против обучающей выборки · low < 0.1 · medium 0.1–0.2 · high > 0.2")
     drift = state["drift"]
@@ -326,7 +328,7 @@ with tab_data:
                 "reference": "эталон",
             }
         )
-        st.dataframe(ddf, use_container_width=True, hide_index=True)
+        st.dataframe(ddf, width="stretch", hide_index=True)
 
 # --- Per-symbol chart --------------------------------------------------------
 with tab_symbol:
@@ -390,7 +392,7 @@ with tab_symbol:
                 plot_bgcolor="rgba(128,128,128,0.05)",
                 legend={"orientation": "h", "y": 1.06},
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
 # --- Control panel -----------------------------------------------------------
 with tab_control:
@@ -440,7 +442,7 @@ with tab_control:
     _section("Конвейер по шагам", "backfill/normalize → features → dataset → train → backtest")
     cols = st.columns(3)
     for i, step in enumerate(C.PIPELINE_STEPS):
-        if cols[i % 3].button(step["label"], key=f"step_{step['key']}", use_container_width=True):
+        if cols[i % 3].button(step["label"], key=f"step_{step['key']}", width="stretch"):
             with st.spinner(f"{step['label']}…"):
                 rc, out = pm.run_once(step["argv"])
             st.session_state["last_step_out"] = (step["label"], rc, out)

@@ -183,3 +183,63 @@ class TestC4RetentionRunsUnconditionally(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestC5DashboardDoesNotComputeBacktest(unittest.TestCase):
+    """The dashboard was OOM-killed mid-render because build_system_report ran
+    the full backtest replay (whole dataset + per-row inference) on every page
+    load. Heavy compute belongs to the retrain, which publishes the result."""
+
+    def _storage(self, root: Path) -> dict:
+        for name in ("logs", "datasets", "raw", "features", "models"):
+            (root / name).mkdir(parents=True, exist_ok=True)
+        return {
+            "logs_dir": str(root / "logs"), "datasets_dir": str(root / "datasets"),
+            "raw_dir": str(root / "raw"), "features_dir": str(root / "features"),
+            "models_dir": str(root / "models"),
+        }
+
+    def test_read_only_report_never_calls_event_backtest(self):
+        from amber.monitoring import reporting
+
+        with tempfile.TemporaryDirectory() as td:
+            storage = self._storage(Path(td))
+            with mock.patch.object(reporting, "event_backtest", side_effect=AssertionError("must not run")) as bt:
+                report = reporting.build_system_report(storage, compute_backtest=False)
+            bt.assert_not_called()
+            self.assertEqual(report["backtest"]["status"], "pending")
+
+    def test_published_result_is_shown_to_the_dashboard(self):
+        from amber.monitoring import reporting
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            storage = self._storage(root)
+            reporting.save_backtest_result(root / "logs", {"signals": 1744, "sharpe": -0.268})
+
+            with mock.patch.object(reporting, "event_backtest", side_effect=AssertionError("must not run")):
+                report = reporting.build_system_report(storage, compute_backtest=False)
+            self.assertEqual(report["backtest"]["signals"], 1744)
+            self.assertIn("computed_at", report["backtest"])
+
+    def test_computing_caller_publishes_for_the_dashboard(self):
+        from amber.monitoring import reporting
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            storage = self._storage(root)
+            with mock.patch.object(reporting, "event_backtest", return_value={"signals": 7}):
+                reporting.build_system_report(storage, compute_backtest=True)
+            self.assertEqual(reporting._load_cached_backtest(root / "logs")["signals"], 7)
+
+    def test_signal_tail_read_is_bounded(self):
+        from amber.dashboard.data import _read_jsonl_tail
+
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "signals.jsonl"
+            with p.open("w", encoding="utf-8") as fh:
+                for i in range(5000):
+                    fh.write(json.dumps({"i": i}) + "\n")
+            rows = _read_jsonl_tail(p, max_lines=10)
+            self.assertEqual(len(rows), 10)
+            self.assertEqual(rows[-1]["i"], 4999)  # keeps the newest

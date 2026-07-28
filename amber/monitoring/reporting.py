@@ -20,6 +20,43 @@ def _require_storage_key(storage: dict[str, str], key: str) -> Path:
     return Path(value)
 
 
+BACKTEST_CACHE_FILE = "backtest.json"
+
+
+def save_backtest_result(logs_dir: Path, result: dict[str, Any]) -> None:
+    """Persist a backtest result for the dashboard to read.
+
+    The replay loads the whole dataset and scores every row, so it belongs to the
+    hourly retrain, not to a UI render.
+    """
+    logs_dir = Path(logs_dir)
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    payload = {"computed_at": datetime.now(timezone.utc).isoformat(), "result": result}
+    path = logs_dir / BACKTEST_CACHE_FILE
+    tmp = path.with_suffix(".json.tmp")
+    try:
+        tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _load_cached_backtest(logs_dir: Path) -> dict[str, Any] | None:
+    path = Path(logs_dir) / BACKTEST_CACHE_FILE
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    result = payload.get("result")
+    if not isinstance(result, dict):
+        return None
+    result = dict(result)
+    result["computed_at"] = payload.get("computed_at")
+    return result
+
+
 def _load_thresholds(storage: dict[str, str]) -> dict[str, Any]:
     """Read config/thresholds.yaml by walking up from a storage path.
 
@@ -178,6 +215,8 @@ def build_system_report(
     storage: dict[str, str],
     model_eval_fresh_sec: int = 6 * 60 * 60,
     require_model_eval_for_overall_ok: bool = True,
+    *,
+    compute_backtest: bool = True,
 ) -> dict[str, Any]:
     logs_dir = _require_storage_key(storage, "logs_dir")
     datasets_dir = _require_storage_key(storage, "datasets_dir")
@@ -200,18 +239,29 @@ def build_system_report(
 
     backtest: dict[str, Any]
     backtest_ok = True
-    try:
-        # Prefer the model-driven replay; fall back to the label replay when no
-        # trained model exists yet. The promotion-gate replay must use the SAME
-        # operating thresholds the live scanner uses, otherwise the dashboard's
-        # trade count is computed against hardcoded defaults and never matches
-        # the deployed gate.
+    if not compute_backtest:
+        # Read-only callers (the dashboard) must not run the replay: it loads the
+        # entire dataset and scores every row, which on a small box exhausts RAM
+        # and gets the UI process OOM-killed mid-render. The hourly retrain
+        # publishes the result instead.
+        cached = _load_cached_backtest(logs_dir)
+        backtest = cached if cached is not None else {"status": "pending", "mode": "not_computed_yet"}
+    else:
         try:
-            backtest = event_backtest(datasets_dir, models_dir, thresholds=_load_thresholds(storage))
-        except Exception:
-            backtest = event_backtest(datasets_dir)
-    except Exception as exc:  # pragma: no cover - safe runtime fallback
-        backtest = {"error": str(exc)}
+            # Prefer the model-driven replay; fall back to the label replay when no
+            # trained model exists yet. The promotion-gate replay must use the SAME
+            # operating thresholds the live scanner uses, otherwise the dashboard's
+            # trade count is computed against hardcoded defaults and never matches
+            # the deployed gate.
+            try:
+                backtest = event_backtest(datasets_dir, models_dir, thresholds=_load_thresholds(storage))
+            except Exception:
+                backtest = event_backtest(datasets_dir)
+            save_backtest_result(logs_dir, backtest)
+        except Exception as exc:  # pragma: no cover - safe runtime fallback
+            backtest = {"error": str(exc)}
+            backtest_ok = False
+    if backtest.get("error"):
         backtest_ok = False
 
     freshness_window = max(60, int(model_eval_fresh_sec))

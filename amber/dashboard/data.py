@@ -6,6 +6,7 @@ dashboard never diverges from what the pipeline actually produces.
 
 from __future__ import annotations
 
+from collections import deque
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -64,6 +65,10 @@ def safe_system_report(
             storage,
             model_eval_fresh_sec=model_eval_fresh_sec,
             require_model_eval_for_overall_ok=require_model_eval,
+            # Never run the backtest replay inside the UI process — it loads the
+            # whole dataset per render and OOM-kills the dashboard. Show the
+            # result published by the hourly retrain instead.
+            compute_backtest=False,
         )
         return report, None
     except Exception as exc:  # dashboard must never crash on partial data
@@ -73,9 +78,13 @@ def safe_system_report(
 def _read_jsonl_tail(path: Path, max_lines: int) -> list[dict[str, Any]]:
     if not path.exists():
         return []
-    lines = path.read_text(encoding="utf-8").splitlines()
+    # Stream with a bounded deque instead of read_text(): signals.jsonl and the
+    # normalized parts grow without limit, and slurping them into the UI process
+    # is a steady memory leak across renders.
+    with path.open("r", encoding="utf-8") as fh:
+        lines = deque(fh, maxlen=max_lines)
     out: list[dict[str, Any]] = []
-    for raw in lines[-max_lines:]:
+    for raw in lines:
         if not raw.strip():
             continue
         try:
