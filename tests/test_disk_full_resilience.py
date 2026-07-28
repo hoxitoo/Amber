@@ -147,6 +147,39 @@ class TestC4RetentionRunsUnconditionally(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             self.assertGreater(free_bytes(Path(td) / "does" / "not" / "exist"), 0)
 
+    def test_datasets_get_a_tighter_budget_than_models(self):
+        """Datasets are the biggest artifact and are regenerable, so they must
+        not inherit the model retention count (that is what reached 53 GB)."""
+        from amber.common.retention import dataset_keep
+
+        self.assertEqual(dataset_keep({"keep_runs": 5}), 2)  # not 5
+        self.assertEqual(dataset_keep({"keep_dataset_runs": 3}), 3)
+        self.assertEqual(dataset_keep({"keep_dataset_runs": 0}), 1)  # never zero
+        self.assertEqual(dataset_keep({"keep_dataset_runs": "bad"}), 2)
+
+    def test_sweep_applies_the_dataset_budget_not_keep_runs(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "run_pipeline_loop", Path(__file__).resolve().parents[1] / "scripts" / "run_pipeline_loop.py"
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            datasets = root / "datasets"
+            for i in range(6):
+                (datasets / f"dataset_{i:03d}").mkdir(parents=True)
+                (datasets / f"dataset_{i:03d}" / "dataset.jsonl").write_text("{}\n", encoding="utf-8")
+
+            mod._retention_sweep({"storage": {
+                "datasets_dir": str(datasets), "models_dir": str(root / "models"),
+                "raw_dir": str(root / "raw"), "state_dir": str(root / "state"),
+                "keep_runs": 5, "keep_dataset_runs": 2,
+            }})
+            self.assertEqual(sorted(p.name for p in datasets.iterdir()), ["dataset_004", "dataset_005"])
+
 
 if __name__ == "__main__":
     unittest.main()

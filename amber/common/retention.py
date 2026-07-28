@@ -11,6 +11,25 @@ import shutil
 logger = logging.getLogger(__name__)
 
 
+def dataset_keep(storage_cfg: dict) -> int:
+    """How many `dataset_*` runs to retain.
+
+    Datasets dwarf every other artifact (hundreds of MB per hourly rebuild vs a
+    few MB for models) and are fully regenerable from `features/` in about a
+    minute, so they get their own, much tighter budget. Keeping the default at 5
+    like models once let them reach 53 GB on a 59 GB disk.
+    """
+    raw = storage_cfg.get("keep_dataset_runs")
+    if raw is None:
+        return 2
+    try:
+        # Clamp to >=1: unlike other artifacts, "keep 0" here would let the
+        # largest directory on disk grow without any bound at all.
+        return max(1, int(raw))
+    except (TypeError, ValueError):
+        return 2
+
+
 def free_bytes(path: Path) -> int:
     """Free space on the filesystem holding `path` (0 if it cannot be read).
 

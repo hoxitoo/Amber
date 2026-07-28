@@ -6,7 +6,11 @@ run:
   log_level: INFO
 storage:
   root: data
-  keep_runs: 5   # how many dataset/model/calibration runs to retain on disk
+  keep_runs: 5   # how many model/calibration runs to retain on disk
+  # Datasets get a tighter budget of their own: each hourly rebuild is hundreds
+  # of MB (vs a few MB per model) and is fully regenerable from features/ in
+  # about a minute. Retaining 5 of them once filled a 59 GB disk.
+  keep_dataset_runs: 2
   raw_dir: data/raw
   features_dir: data/features
   datasets_dir: data/datasets

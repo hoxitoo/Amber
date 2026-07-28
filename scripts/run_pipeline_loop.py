@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amber.common.config import ConfigLoader
 from amber.common.logging import setup_logging
-from amber.common.retention import cleanup_consumed_ws_raw, free_bytes, prune_run_dirs
+from amber.common.retention import cleanup_consumed_ws_raw, dataset_keep, free_bytes, prune_run_dirs
 from amber.datasets.build import build_dataset_from_config
 from amber.pipeline import collector_app, features_app, normalize_app
 from amber.pipeline.normalize_app import OFFSETS_STATE_KEY
@@ -51,9 +51,10 @@ def _retention_sweep(config: dict) -> None:
         return
 
     keep = int(storage.get("keep_runs", 5) or 5)
+    keep_datasets = dataset_keep(storage)
     low = free_bytes(raw_root) < LOW_DISK_BYTES
     if low:
-        keep = 1
+        keep = keep_datasets = 1
         logger.warning("low disk (%.2f GB free): pruning to the newest run only", free_bytes(raw_root) / 1e9)
 
     try:
@@ -61,8 +62,12 @@ def _retention_sweep(config: dict) -> None:
         deleted, freed = cleanup_consumed_ws_raw(raw_root, offsets)
         if deleted:
             state.set(OFFSETS_STATE_KEY, offsets)
-        for root, prefix in ((datasets_root, "dataset_"), (models_root, "model_"), (models_root, "calib_")):
-            d, f = prune_run_dirs(root, prefix, keep)
+        for root, prefix, n in (
+            (datasets_root, "dataset_", keep_datasets),
+            (models_root, "model_", keep),
+            (models_root, "calib_", keep),
+        ):
+            d, f = prune_run_dirs(root, prefix, n)
             deleted += d
             freed += f
         if deleted:

@@ -9,7 +9,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amber.common.config import ConfigLoader
-from amber.common.retention import cleanup_consumed_ws_raw, prune_run_dirs
+from amber.common.retention import cleanup_consumed_ws_raw, dataset_keep, prune_run_dirs
 from amber.pipeline.normalize_app import OFFSETS_STATE_KEY
 from amber.storage.state_store import StateStore
 
@@ -26,8 +26,12 @@ def main() -> None:
 
     freed = 0
     deleted = 0
-    for root, prefix in ((datasets_root, "dataset_"), (models_root, "model_"), (models_root, "calib_")):
-        d, f = prune_run_dirs(root, prefix, keep)
+    for root, prefix, n in (
+        (datasets_root, "dataset_", dataset_keep(storage)),
+        (models_root, "model_", keep),
+        (models_root, "calib_", keep),
+    ):
+        d, f = prune_run_dirs(root, prefix, n)
         deleted += d
         freed += f
 
