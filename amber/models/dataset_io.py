@@ -1,18 +1,38 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
+logger = logging.getLogger(__name__)
+
 
 def read_jsonl_strict(path: Path) -> list[dict[str, Any]]:
+    """Read a JSONL artifact, rejecting corruption.
+
+    One exception: a *truncated* final line — the last line of the file, with no
+    terminating newline — is dropped with a warning. That is the signature of a
+    writer killed mid-line (a full disk, a hard kill), and discarding a 200k-row
+    dataset over its incomplete tail record is worse than losing that record. A
+    malformed line that IS newline-terminated was written in full, so it means
+    real corruption and still raises, as does corruption anywhere earlier.
+    """
     rows: list[dict[str, Any]] = []
     with path.open("r", encoding="utf-8") as fh:
-        for lineno, line in enumerate(fh, start=1):
-            try:
-                rows.append(json.loads(line))
-            except json.JSONDecodeError as exc:
-                raise ValueError(f"Invalid JSONL in {path} at line {lineno}: {exc.msg}") from exc
+        lines = fh.readlines()
+    # Only an unterminated last line counts as a truncation.
+    truncated_index = len(lines) - 1 if lines and not lines[-1].endswith("\n") else -1
+    for lineno, line in enumerate(lines, start=1):
+        if not line.strip():
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError as exc:
+            if lineno - 1 == truncated_index:
+                logger.warning("dropping truncated final line in %s: %s", path, exc.msg)
+                continue
+            raise ValueError(f"Invalid JSONL in {path} at line {lineno}: {exc.msg}") from exc
     return rows
 
 

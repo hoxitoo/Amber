@@ -19,11 +19,56 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amber.common.config import ConfigLoader
 from amber.common.logging import setup_logging
+from amber.common.retention import cleanup_consumed_ws_raw, free_bytes, prune_run_dirs
 from amber.datasets.build import build_dataset_from_config
 from amber.pipeline import collector_app, features_app, normalize_app
+from amber.pipeline.normalize_app import OFFSETS_STATE_KEY
 from amber.pipeline.train_app import NotEnoughData, run_training
+from amber.storage.state_store import StateStore
 
 logger = logging.getLogger(__name__)
+
+# Below this much free space the box is one flush away from ENOSPC, which used to
+# wedge every stage at once. Sweep hard and keep fewer runs until it recovers.
+LOW_DISK_BYTES = 1_500_000_000  # 1.5 GB
+
+
+def _retention_sweep(config: dict) -> None:
+    """Reclaim disk at the START of every cycle.
+
+    Retention used to run only as the tail of a successful training run, so the
+    moment the disk filled (training fails first) nothing was ever pruned again —
+    the cleanup was unreachable exactly when it was needed. Running it up front,
+    unconditionally, is what lets the box dig itself out (audit C4).
+    """
+    storage = config.get("storage", {})
+    try:
+        datasets_root = Path(storage["datasets_dir"])
+        models_root = Path(storage["models_dir"])
+        raw_root = Path(storage["raw_dir"])
+        state = StateStore(Path(storage["state_dir"]))
+    except (KeyError, TypeError):
+        return
+
+    keep = int(storage.get("keep_runs", 5) or 5)
+    low = free_bytes(raw_root) < LOW_DISK_BYTES
+    if low:
+        keep = 1
+        logger.warning("low disk (%.2f GB free): pruning to the newest run only", free_bytes(raw_root) / 1e9)
+
+    try:
+        offsets = dict(state.get(OFFSETS_STATE_KEY))
+        deleted, freed = cleanup_consumed_ws_raw(raw_root, offsets)
+        if deleted:
+            state.set(OFFSETS_STATE_KEY, offsets)
+        for root, prefix in ((datasets_root, "dataset_"), (models_root, "model_"), (models_root, "calib_")):
+            d, f = prune_run_dirs(root, prefix, keep)
+            deleted += d
+            freed += f
+        if deleted:
+            logger.info("retention sweep freed %.1f MB (%s items)", freed / 1e6, deleted)
+    except Exception as exc:  # never let housekeeping kill the loop
+        logger.error("retention sweep failed: %s", exc)
 
 
 def _retrain(config: dict) -> None:
@@ -51,6 +96,10 @@ def main() -> None:
     retrain_min = int(pipeline_cfg.get("retrain_min", 60))
     logger.info("pipeline loop started interval=%ss retrain_min=%s", interval, retrain_min)
 
+    # Free space before doing anything else: if the box was wedged by a full
+    # disk, a restart must be able to dig out instead of immediately re-failing.
+    _retention_sweep(cfg)
+
     # Seed history on startup so a fresh box has enough candles to train within
     # minutes instead of waiting ~1h for the WS stream. Idempotent (watermark
     # dedup), so a restart never duplicates data.
@@ -61,6 +110,8 @@ def main() -> None:
 
     last_retrain = 0.0
     while True:
+        _retention_sweep(cfg)
+
         for stage, fn in (("normalize", normalize_app.main), ("features", features_app.main)):
             try:
                 fn()

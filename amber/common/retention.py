@@ -11,6 +11,21 @@ import shutil
 logger = logging.getLogger(__name__)
 
 
+def free_bytes(path: Path) -> int:
+    """Free space on the filesystem holding `path` (0 if it cannot be read).
+
+    Walks up to the nearest existing parent so it also works for a directory that
+    has not been created yet.
+    """
+    p = Path(path)
+    while not p.exists() and p != p.parent:
+        p = p.parent
+    try:
+        return int(shutil.disk_usage(p).free)
+    except OSError:
+        return 0
+
+
 def _dir_size(path: Path) -> int:
     total = 0
     for p in path.rglob("*"):

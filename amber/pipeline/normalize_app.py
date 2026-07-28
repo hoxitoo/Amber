@@ -75,6 +75,14 @@ def normalize_ws_raw(raw_root: Path, state: StateStore) -> int:
     normalizer = BybitNormalizer()
 
     offsets: dict[str, int] = dict(state.get(OFFSETS_STATE_KEY))
+
+    # Reclaim disk BEFORE writing anything. This used to run at the very end, so
+    # a full disk made the write below raise and the cleanup never executed —
+    # the one mechanism that frees space was unreachable exactly when it was
+    # needed, and the box stayed wedged until a human intervened (audit C1).
+    cleanup_consumed_ws_raw(raw_root, offsets)
+    state.set(OFFSETS_STATE_KEY, offsets)
+
     watermark = state.get(WATERMARK_STATE_KEY)
     last_ts: dict[str, int] = {k: int(v) for k, v in watermark.get("last_ts", {}).items()}
     last_row_by_symbol: dict[str, Any] = {}
@@ -86,54 +94,69 @@ def normalize_ws_raw(raw_root: Path, state: StateStore) -> int:
     newest_minute = 0
 
     written = 0
-    for file in sorted((raw_root / "ws_raw").glob("*/part-*.jsonl")):
-        symbol = file.parent.name
-        key = f"{symbol}/{file.name}"
-        payloads, new_offset = _read_new_payloads(file, int(offsets.get(key, 0)))
-        offsets[key] = new_offset
+    try:
+        for file in sorted((raw_root / "ws_raw").glob("*/part-*.jsonl")):
+            symbol = file.parent.name
+            key = f"{symbol}/{file.name}"
+            payloads, new_offset = _read_new_payloads(file, int(offsets.get(key, 0)))
 
-        out: list[dict[str, Any]] = []
-        for payload in payloads:
-            if normalizer.update_from_ws_ticker(payload):
-                continue
-            trades = normalizer.trades_from_ws(payload)
-            if trades:
-                for tsym, tts, side, size in trades:
-                    minute = (tts // _MINUTE_MS) * _MINUTE_MS
-                    newest_minute = max(newest_minute, minute)
-                    bucket = trade_buckets.setdefault(f"{tsym}|{minute}", {"buy": 0.0, "sell": 0.0, "count": 0.0})
-                    bucket["buy" if side == "Buy" else "sell"] += size
-                    bucket["count"] += 1.0
-                continue
-            for candle in normalizer.candles_from_ws(payload):
-                if candle.ts <= last_ts.get(symbol, -1):
+            # Progress for this file is staged, not applied: a failed write (e.g.
+            # a full disk) must leave the offset and watermark untouched so the
+            # payloads are re-read next run instead of being silently skipped.
+            out: list[dict[str, Any]] = []
+            pending_last_ts: dict[str, int] = {}
+            consumed_buckets: dict[str, dict[str, float]] = {}
+            for payload in payloads:
+                if normalizer.update_from_ws_ticker(payload):
                     continue
-                candle_minute = (candle.ts // _MINUTE_MS) * _MINUTE_MS
-                agg = trade_buckets.pop(f"{candle.symbol}|{candle_minute}", None)
-                row = normalizer.to_normalized(candle, trades=agg)
-                last = last_row_by_symbol.get(symbol)
-                step_ms = step_ms_for_tf(row.tf)
-                if last is not None and row.ts - last.ts > step_ms:
-                    out.extend([x.model_dump() for x in gap_fill(last, row.ts, step_ms)])
-                out.append(row.model_dump())
-                last_row_by_symbol[symbol] = row
-                last_ts[symbol] = candle.ts
+                trades = normalizer.trades_from_ws(payload)
+                if trades:
+                    for tsym, tts, side, size in trades:
+                        minute = (tts // _MINUTE_MS) * _MINUTE_MS
+                        newest_minute = max(newest_minute, minute)
+                        bucket = trade_buckets.setdefault(f"{tsym}|{minute}", {"buy": 0.0, "sell": 0.0, "count": 0.0})
+                        bucket["buy" if side == "Buy" else "sell"] += size
+                        bucket["count"] += 1.0
+                    continue
+                for candle in normalizer.candles_from_ws(payload):
+                    seen_ts = max(int(last_ts.get(symbol, -1)), int(pending_last_ts.get(symbol, -1)))
+                    if candle.ts <= seen_ts:
+                        continue
+                    candle_minute = (candle.ts // _MINUTE_MS) * _MINUTE_MS
+                    bucket_key = f"{candle.symbol}|{candle_minute}"
+                    agg = trade_buckets.pop(bucket_key, None)
+                    if agg is not None:
+                        consumed_buckets[bucket_key] = agg
+                    row = normalizer.to_normalized(candle, trades=agg)
+                    last = last_row_by_symbol.get(symbol)
+                    step_ms = step_ms_for_tf(row.tf)
+                    if last is not None and row.ts - last.ts > step_ms:
+                        out.extend([x.model_dump() for x in gap_fill(last, row.ts, step_ms)])
+                    out.append(row.model_dump())
+                    last_row_by_symbol[symbol] = row
+                    pending_last_ts[symbol] = candle.ts
 
-        if out:
-            sink.write_records(topic="normalized", symbol=symbol, records=out)
-            written += len(out)
+            try:
+                if out:
+                    sink.write_records(topic="normalized", symbol=symbol, records=out)
+                    written += len(out)
+            except OSError:
+                # Put back what this file consumed so nothing is lost, then let
+                # the caller see the failure (the finally block still persists
+                # the progress of the files that did succeed).
+                trade_buckets.update(consumed_buckets)
+                raise
+            offsets[key] = new_offset
+            last_ts.update(pending_last_ts)
+    finally:
+        # Bound the bucket store: drop minutes far behind the newest trade seen.
+        if newest_minute:
+            cutoff = newest_minute - _BUCKET_PRUNE_MS
+            trade_buckets = {k: v for k, v in trade_buckets.items() if int(k.split("|")[1]) >= cutoff}
 
-    # Bound the bucket store: drop minutes far behind the newest trade seen.
-    if newest_minute:
-        cutoff = newest_minute - _BUCKET_PRUNE_MS
-        trade_buckets = {k: v for k, v in trade_buckets.items() if int(k.split("|")[1]) >= cutoff}
-
-    # Reclaim disk: delete rotated ws_raw files already fully consumed.
-    cleanup_consumed_ws_raw(raw_root, offsets)
-
-    state.set(OFFSETS_STATE_KEY, offsets)
-    state.set(WATERMARK_STATE_KEY, {"last_ts": last_ts})
-    state.set(TRADE_BUCKETS_STATE_KEY, trade_buckets)
+        state.set(OFFSETS_STATE_KEY, offsets)
+        state.set(WATERMARK_STATE_KEY, {"last_ts": last_ts})
+        state.set(TRADE_BUCKETS_STATE_KEY, trade_buckets)
     return written
 
 

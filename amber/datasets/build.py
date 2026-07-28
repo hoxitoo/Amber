@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -25,10 +26,26 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    """Write the dataset atomically (temp file + rename).
+
+    A direct write that runs out of disk mid-stream leaves a truncated file whose
+    last line is an unterminated JSON string; because it is still the newest
+    `dataset_*` dir, every later read picks it and fails ("Invalid JSONL ...
+    Unterminated string"), taking down training and the backtest until a human
+    deletes it. Staging through a temp file means a failed write never replaces
+    the last good dataset (audit C3).
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as fh:
-        for row in rows:
-            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    try:
+        with tmp.open("w", encoding="utf-8") as fh:
+            for row in rows:
+                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        tmp.replace(path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def _rolling_vol(values: list[float], end_idx: int, window: int) -> float:
