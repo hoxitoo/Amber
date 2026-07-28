@@ -17,22 +17,34 @@ def read_jsonl_strict(path: Path) -> list[dict[str, Any]]:
     dataset over its incomplete tail record is worse than losing that record. A
     malformed line that IS newline-terminated was written in full, so it means
     real corruption and still raises, as does corruption anywhere earlier.
+
+    The file is streamed, never slurped: datasets run to hundreds of MB and this
+    is called several times per retrain (train, calibrate, eval, backtest), so
+    holding the raw text in memory on top of the parsed rows is what pushes a
+    small VPS into the OOM killer. A malformed line is therefore held as pending
+    rather than judged immediately — only reaching EOF proves it was last.
     """
     rows: list[dict[str, Any]] = []
+    pending: tuple[int, str, str] | None = None
     with path.open("r", encoding="utf-8") as fh:
-        lines = fh.readlines()
-    # Only an unterminated last line counts as a truncation.
-    truncated_index = len(lines) - 1 if lines and not lines[-1].endswith("\n") else -1
-    for lineno, line in enumerate(lines, start=1):
-        if not line.strip():
-            continue
-        try:
-            rows.append(json.loads(line))
-        except json.JSONDecodeError as exc:
-            if lineno - 1 == truncated_index:
-                logger.warning("dropping truncated final line in %s: %s", path, exc.msg)
+        for lineno, line in enumerate(fh, start=1):
+            if pending is not None:
+                # More data followed the malformed line, so it was not a
+                # truncated tail: this is real corruption.
+                bad_lineno, _, msg = pending
+                raise ValueError(f"Invalid JSONL in {path} at line {bad_lineno}: {msg}")
+            if not line.strip():
                 continue
-            raise ValueError(f"Invalid JSONL in {path} at line {lineno}: {exc.msg}") from exc
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError as exc:
+                pending = (lineno, line, exc.msg)
+    if pending is not None:
+        bad_lineno, bad_line, msg = pending
+        if bad_line.endswith("\n"):
+            # Written in full, so the damage is real rather than a clean cut.
+            raise ValueError(f"Invalid JSONL in {path} at line {bad_lineno}: {msg}")
+        logger.warning("dropping truncated final line in %s: %s", path, msg)
     return rows
 
 
