@@ -6,6 +6,7 @@ B3  absolute 0.65 gate is unreachable for calibrated rare events
 B4  constant train feature produced a spurious PSI ~12 "high drift" alarm
 """
 
+import importlib.util
 import json
 import tempfile
 import unittest
@@ -91,8 +92,15 @@ class TestB1B2Reporting(unittest.TestCase):
 class TestB5DashboardSignalMarker(unittest.TestCase):
     """B5: the 'По символу' chart crashed for any symbol that HAD signals because
     the signal marker used an 8-digit RGBA hex ('#00000055'), which plotly
-    rejects for scatter.marker.line.color."""
+    rejects for scatter.marker.line.color.
 
+    plotly is an optional dashboard dependency (requirements-dashboard.txt), so
+    the check that needs it is skipped where it is absent — the core pipeline is
+    installed without it. The source scan below needs no dependency and guards
+    the regression everywhere.
+    """
+
+    @unittest.skipIf(importlib.util.find_spec("plotly") is None, "plotly not installed (optional dashboard dep)")
     def test_signal_marker_color_is_plotly_valid(self):
         import plotly.graph_objects as go
 
