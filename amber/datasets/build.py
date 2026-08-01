@@ -101,6 +101,7 @@ def build_dataset_from_config(config: dict[str, Any]) -> dict[str, int]:
         threshold_cap=float(labeling.get("threshold_cap", 0.05)),
         horizon_steps_list=[int(x) for x in labeling.get("horizon_steps_list", [])],
         min_warmup_bars=int(labeling.get("min_warmup_bars", 60)),
+        max_candles_per_symbol=int(labeling.get("max_candles_per_symbol", 0)),
     )
 
 
@@ -118,6 +119,7 @@ def build_dataset(
     threshold_cap: float = 0.05,
     horizon_steps_list: list[int] | None = None,
     min_warmup_bars: int = 0,
+    max_candles_per_symbol: int = 0,
 ) -> dict[str, int]:
     horizons = _validate_horizons(horizon_steps=horizon_steps, horizon_steps_list=horizon_steps_list)
 
@@ -144,6 +146,21 @@ def build_dataset(
             continue
         rows.sort(key=lambda r: int(r.get("ts", 0) or 0))
 
+        # Rolling training window. Without a bound the dataset grows with every
+        # candle ever collected — at 27 symbols x 3 horizons that is ~460k rows
+        # after four days, materialised as Python dicts four times per retrain
+        # (train, calibrate, eval, backtest), which exhausts a small box. A
+        # window also suits the problem: intraday crypto regimes shift, so the
+        # recent past carries more signal than months-old history.
+        label_start = 0
+        if max_candles_per_symbol > 0 and len(rows) > max_candles_per_symbol:
+            # Keep an extra prefix purely as volatility context so the adaptive
+            # threshold at the window's first labelled row sees a full lookback.
+            context = max(0, threshold_vol_window) if adaptive_thresholds else 0
+            cut = max(0, len(rows) - max_candles_per_symbol - context)
+            rows = rows[cut:]
+            label_start = min(context, max(0, len(rows) - 1))
+
         prices = [float(r.get("mid_price", 0.0)) for r in rows]
         ret_1_vals = [float(r.get("ret_1", 0.0)) for r in rows]
         # Exclude synthetic gap-fill rows and warm-up rows whose long-lookback
@@ -151,7 +168,9 @@ def build_dataset(
         clean_idx = [
             i
             for i, r in enumerate(rows)
-            if not bool(r.get("is_synthetic", False)) and int(r.get("obs", 0) or 0) >= min_warmup_bars
+            if i >= label_start
+            and not bool(r.get("is_synthetic", False))
+            and int(r.get("obs", 0) or 0) >= min_warmup_bars
         ]
 
         for i in clean_idx:

@@ -113,7 +113,16 @@ def main() -> None:
     except Exception as exc:
         logger.warning("startup backfill failed (will rely on WS stream): %s", exc)
 
-    last_retrain = 0.0
+    # Retraining is by far the heaviest step. If it is what exhausted memory,
+    # restarting straight into another one turns a single OOM into a crash loop,
+    # so only a box with no model yet retrains immediately; one that already has
+    # a model waits out the normal interval and keeps collecting meanwhile.
+    models_dir = Path(cfg.get("storage", {}).get("models_dir", "data/models"))
+    has_model = any(models_dir.glob("model_*/model.json")) if models_dir.exists() else False
+    last_retrain = time.time() if has_model else 0.0
+    if has_model:
+        logger.info("existing model found; first retrain in %s min (restart-safe)", retrain_min)
+
     while True:
         _retention_sweep(cfg)
 

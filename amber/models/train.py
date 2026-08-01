@@ -46,11 +46,19 @@ def _clip_bounds(x: list[list[float]], lo_pct: float = 0.01, hi_pct: float = 0.9
     return out
 
 
-def _apply_clip(x: list[list[float]], bounds: dict[str, list[float]]) -> list[list[float]]:
+def _apply_clip(
+    x: list[list[float]], bounds: dict[str, list[float]], *, inplace: bool = False
+) -> list[list[float]]:
+    """Winsorize to the train-time bounds.
+
+    `inplace` avoids duplicating the whole feature matrix, which at ~460k rows
+    is a second several-hundred-MB allocation; callers pass it only for a matrix
+    they built themselves and do not share.
+    """
     if not bounds:
         return x
     idx = {name: j for j, name in enumerate(MODEL_FEATURES)}
-    clipped = [row[:] for row in x]
+    clipped = x if inplace else [row[:] for row in x]
     for name, (lo, hi) in bounds.items():
         j = idx.get(name)
         if j is None:
@@ -117,7 +125,7 @@ def _fit_head(x: list[list[float]], y: list[int], w: list[float] | None = None) 
 def _fit_dual(rows: list[dict[str, Any]]) -> dict[str, Any]:
     x_raw = [feature_vector(r) for r in rows]
     bounds = _clip_bounds(x_raw)
-    x = _apply_clip(x_raw, bounds)
+    x = _apply_clip(x_raw, bounds, inplace=True)  # x_raw is local; no copy needed
     # Uniqueness proxy for overlapping label windows: a row spanning H bars gets
     # weight 1/H so each underlying candle contributes roughly once (audit Q3).
     w = [1.0 / max(1, int(r.get("horizon_steps", 1) or 1)) for r in rows]

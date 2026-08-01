@@ -78,6 +78,12 @@ labeling:
   threshold_cap: 0.05
   # drop warm-up rows whose long-lookback features are still degenerate
   min_warmup_bars: 60
+  # Rolling training window: candles per symbol that enter the dataset (0 = all
+  # history). Dataset rows ≈ symbols × this × len(horizon_steps_list), and the
+  # dataset is materialised in memory several times per retrain, so this is what
+  # bounds RAM. 2880 (~2 days) × 27 symbols × 3 horizons ≈ 230k rows, which is
+  # what the model was already training on. Raise it only with RAM to spare.
+  max_candles_per_symbol: 2880
 
 model:
   cv:
