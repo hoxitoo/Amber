@@ -1,9 +1,12 @@
-"""Regression tests for the 2026-07 senior ML audit findings (B1-B4).
+"""Regression tests for the 2026-07 senior ML audit findings.
 
 B1  dashboard PR-AUC was filtered out of the system report
 B2  system-report backtest ignored configured thresholds
 B3  absolute 0.65 gate is unreachable for calibrated rare events
 B4  constant train feature produced a spurious PSI ~12 "high drift" alarm
+B4b discrete/binary features produced the same spurious 12.434 alarm
+B5  8-digit hex colour crashed the per-symbol chart
+B6  Precision@thr read 0.000 at an unreachable absolute cut
 """
 
 import importlib.util
@@ -120,6 +123,70 @@ class TestB5DashboardSignalMarker(unittest.TestCase):
         src = Path(__file__).resolve().parents[1] / "amber" / "dashboard" / "app.py"
         offenders = re.findall(r"#[0-9A-Fa-f]{8}\b", src.read_text(encoding="utf-8"))
         self.assertEqual(offenders, [], f"plotly rejects 8-digit hex colors: {offenders}")
+
+
+class TestB4bDiscreteFeaturePSI(unittest.TestCase):
+    """PSI reported a permanent 12.434 'high drift'. That number is the exact
+    signature of every live value landing in one bin: binary features like
+    breakout_up_20 are ~95% zeros, so their quantile edges tie at 0 and the
+    uniform 1/n_bins expectation is simply wrong."""
+
+    def _ref(self, ones_every: int = 20, n: int = 2000):
+        from amber.models.train import _feature_quantiles
+
+        rows = [{"breakout_up_20": 1.0 if i % ones_every == 0 else 0.0} for i in range(n)]
+        return _feature_quantiles(rows)["breakout_up_20"]
+
+    def test_identical_distribution_reports_no_drift(self):
+        from amber.monitoring.drift import psi_from_quantile_reference
+
+        live = [1.0 if i % 20 == 0 else 0.0 for i in range(500)]
+        self.assertLess(psi_from_quantile_reference(self._ref(), live), 0.1)
+
+    def test_real_drift_is_still_detected(self):
+        """The false alarm must not be silenced by making the feature blind."""
+        from amber.monitoring.drift import psi_from_quantile_reference
+
+        drifted = [1.0 if i % 10 < 6 else 0.0 for i in range(500)]
+        self.assertGreater(psi_from_quantile_reference(self._ref(), drifted), 0.2)
+
+    def test_continuous_features_are_unaffected(self):
+        import random
+
+        from amber.models.train import _feature_quantiles
+        from amber.monitoring.drift import psi_from_quantile_reference
+
+        rng = random.Random(1)
+        ref = _feature_quantiles([{"ret_1": rng.gauss(0, 0.01)} for _ in range(3000)])["ret_1"]
+        self.assertLess(psi_from_quantile_reference(ref, [rng.gauss(0, 0.01) for _ in range(1000)]), 0.1)
+        self.assertGreater(psi_from_quantile_reference(ref, [rng.gauss(0.03, 0.01) for _ in range(1000)]), 0.2)
+
+    def test_legacy_tied_edges_report_nothing_not_a_fake_alarm(self):
+        from amber.monitoring.drift import psi_from_quantile_reference
+
+        legacy = [0.0] * 10 + [1.0]  # old artifact format, edges tied at 0
+        self.assertEqual(psi_from_quantile_reference(legacy, [0.0] * 400 + [1.0] * 100), 0.0)
+
+
+class TestB6ReachableEvalThreshold(unittest.TestCase):
+    """Precision@thr read 0.000 because the eval cut was an absolute 0.7 that a
+    calibrated rare-event head never reaches — the same mistake as B3, in the
+    metric rather than the gate."""
+
+    def test_operating_point_is_reachable(self):
+        from amber.signals.filters import effective_prob_min
+
+        thr = {"prob_lift_min": 2.0, "prob_abs_floor": 0.12}
+        operating = effective_prob_min(thr, 0.156, absolute_key="pump_prob_calibrated_min")
+        self.assertLess(operating, 0.35)  # inside the calibrated range
+        self.assertGreater(operating, 0.156)  # still above the base rate
+
+    def test_eval_uses_the_operating_point_when_given(self):
+        import inspect
+
+        from amber.models.eval import evaluate_model
+
+        self.assertIn("thresholds", inspect.signature(evaluate_model).parameters)
 
 
 if __name__ == "__main__":

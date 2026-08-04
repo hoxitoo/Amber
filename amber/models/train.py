@@ -166,10 +166,17 @@ def _safe_auc(y: list[int], probs: list[float]) -> float | None:
         return None
 
 
-def _feature_quantiles(rows: list[dict[str, Any]], n_bins: int = 10) -> dict[str, list[float]]:
-    """Per-feature quantile edges over the train segment — the PSI reference
-    distribution used by the drift monitors."""
-    out: dict[str, list[float]] = {}
+def _feature_quantiles(rows: list[dict[str, Any]], n_bins: int = 10) -> dict[str, dict[str, list[float]]]:
+    """Per-feature PSI reference: quantile edges plus the train share per bin.
+
+    The shares are stored rather than assumed uniform because quantile edges tie
+    on discrete features (`breakout_up_20` is ~95% zeros), and a uniform
+    assumption then reports enormous drift for a distribution identical to train
+    (audit B4b).
+    """
+    from bisect import bisect_right
+
+    out: dict[str, dict[str, list[float]]] = {}
     for name in MODEL_FEATURES:
         values = sorted(float(r.get(name, 0.0) or 0.0) for r in rows)
         if not values:
@@ -183,10 +190,27 @@ def _feature_quantiles(rows: list[dict[str, Any]], n_bins: int = 10) -> dict[str
         # retrain restores a real reference. See audit 2026-07 finding B4.
         if values[-1] <= values[0]:
             continue
+
+        # Low-cardinality features (breakout flags are 0/1) cannot be split by
+        # quantile edges at all — every value lands in the same bin, so drift is
+        # invisible. Score them by category instead.
+        distinct = sorted(set(values))
+        if len(distinct) <= n_bins:
+            total = len(values)
+            shares = [sum(1 for v in values if v == d) / total for d in distinct]
+            out[name] = {"values": distinct, "expected": shares}
+            continue
+
         edges = [values[min(len(values) - 1, int(len(values) * i / n_bins))] for i in range(n_bins + 1)]
         edges[0] = values[0]
         edges[-1] = values[-1]
-        out[name] = edges
+
+        counts = [0] * n_bins
+        for v in values:
+            idx = bisect_right(edges, v) - 1
+            counts[max(0, min(n_bins - 1, idx))] += 1
+        total = len(values)
+        out[name] = {"edges": edges, "expected": [c / total for c in counts]}
     return out
 
 

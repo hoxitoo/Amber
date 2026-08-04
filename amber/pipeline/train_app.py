@@ -86,10 +86,16 @@ def run_training(
         holdout_ratio=float(cal_cfg.get("holdout_ratio", 0.2)),
     )
     register_model(models_root=models_root, model_run_id=tr["run_id"], calibration_run_id=cal["run_id"])
+    # Measure precision where the scanner actually fires, not at an absolute cut
+    # a calibrated rare-event head can never reach (audit B6).
+    from amber.monitoring.reporting import _load_thresholds
+
+    storage_paths = {k: str(v) for k, v in config.get("storage", {}).items() if isinstance(v, str)}
     ev = evaluate_model(
         models_root=models_root,
         datasets_root=datasets_root,
         threshold=float(eval_cfg.get("threshold", 0.7)),
+        thresholds=_load_thresholds(storage_paths) or None,
     )
     for key in _METRIC_KEYS:
         if key in ev:

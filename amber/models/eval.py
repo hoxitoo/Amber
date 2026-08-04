@@ -105,7 +105,21 @@ def _reliability_curve(y: list[int], probs: list[float], bins: int = 10) -> list
     return buckets
 
 
-def evaluate_model(models_root: Path, datasets_root: Path, threshold: float = 0.7) -> dict[str, float]:
+def evaluate_model(
+    models_root: Path,
+    datasets_root: Path,
+    threshold: float = 0.7,
+    *,
+    thresholds: dict[str, Any] | None = None,
+) -> dict[str, float]:
+    """Out-of-sample metrics on the model's test segment.
+
+    With `thresholds` (the operating config), precision is measured at the point
+    the live scanner actually fires. A fixed absolute cut is unreachable for a
+    calibrated rare event — calibrated probabilities peak around 0.35 here, so a
+    0.7 cut selects nothing and precision reads 0.000, which looks like total
+    failure but only means the metric was asking the wrong question (audit B6).
+    """
     if threshold < 0.0 or threshold > 1.0:
         raise ValueError("threshold must be in [0, 1]")
     model = load_latest_model(models_root)
@@ -136,12 +150,19 @@ def evaluate_model(models_root: Path, datasets_root: Path, threshold: float = 0.
     y_up = [int(r.get("up_hit", 0)) for r in rows]
     y_down = [int(r.get("down_hit", 0)) for r in rows]
 
-    preds_up = [1 if p >= threshold else 0 for p in probs_up_cal]
+    up_min = down_min = threshold
+    if thresholds:
+        from amber.signals.filters import base_rate_for, effective_prob_min
+
+        up_min = effective_prob_min(thresholds, base_rate_for(model, "pump"), absolute_key="pump_prob_calibrated_min")
+        down_min = effective_prob_min(thresholds, base_rate_for(model, "dump"), absolute_key="dump_prob_calibrated_min")
+
+    preds_up = [1 if p >= up_min else 0 for p in probs_up_cal]
     tp_up = sum(1 for yp, yt in zip(preds_up, y_up) if yp == 1 and yt == 1)
     fp_up = sum(1 for yp, yt in zip(preds_up, y_up) if yp == 1 and yt == 0)
     precision_up = 0.0 if tp_up + fp_up == 0 else tp_up / (tp_up + fp_up)
 
-    preds_down = [1 if p >= threshold else 0 for p in probs_down_cal]
+    preds_down = [1 if p >= down_min else 0 for p in probs_down_cal]
     tp_down = sum(1 for yp, yt in zip(preds_down, y_down) if yp == 1 and yt == 1)
     fp_down = sum(1 for yp, yt in zip(preds_down, y_down) if yp == 1 and yt == 0)
     precision_down = 0.0 if tp_down + fp_down == 0 else tp_down / (tp_down + fp_down)
@@ -153,6 +174,10 @@ def evaluate_model(models_root: Path, datasets_root: Path, threshold: float = 0.
         "rows": float(len(y_up)),
         "rows_total": float(len(ordered)),
         "in_sample": 1.0 if in_sample else 0.0,
+        "threshold_up": float(up_min),
+        "threshold_down": float(down_min),
+        "n_predicted_up": float(sum(preds_up)),
+        "n_predicted_down": float(sum(preds_down)),
         "precision_at_threshold": precision_up,
         "precision_up_at_threshold": precision_up,
         "precision_down_at_threshold": precision_down,

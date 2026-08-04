@@ -134,32 +134,70 @@ def psi(expected: list[float], actual: list[float], bins: int = 10) -> float:
     return sum((av - ev) * math.log(av / ev) for ev, av in zip(e, a))
 
 
-def psi_from_quantile_reference(edges: list[float], live: list[float], eps: float = 1e-6) -> float:
-    """PSI of `live` against a train-set quantile grid.
+def psi_from_quantile_reference(
+    reference: list[float] | dict[str, list[float]], live: list[float], eps: float = 1e-6
+) -> float:
+    """PSI of `live` against a train-set reference.
 
-    `edges` are n_bins+1 quantile boundaries from the training data, so the
-    expected share per bin is uniform (1/n_bins). Live values outside the grid
-    are clipped into the edge bins.
+    `reference` is either {"edges": [...], "expected": [...]} — quantile
+    boundaries plus the train share actually observed in each bin — or, for
+    legacy artifacts, a bare list of edges.
+
+    The expected share is only uniform (1/n_bins) when the quantile edges are
+    distinct. Discrete features break that: `breakout_up_20` is ~95% zeros, so
+    its deciles are [0,0,...,0,1] and every live value falls into one bin,
+    producing PSI ≈ 12.434 — the exact figure the dashboard was reporting — even
+    for a distribution identical to train. Storing the real per-bin shares fixes
+    it; legacy references with tied edges cannot be corrected after the fact, so
+    they report no drift rather than a fabricated alarm (audit B4b).
     """
+    if isinstance(reference, dict) and reference.get("values"):
+        # Categorical reference: quantile edges cannot separate 0 from 1, so
+        # low-cardinality features are scored by exact value, with anything
+        # unseen in training pooled into an extra bucket so it registers.
+        values = [float(x) for x in reference["values"]]
+        expected = [float(x) for x in reference.get("expected", [])]
+        if len(expected) != len(values) or not live:
+            return 0.0
+        index = {v: i for i, v in enumerate(values)}
+        counts = [0] * (len(values) + 1)
+        for v in live:
+            counts[index.get(float(v), len(values))] += 1
+        total = len(live)
+        out = 0.0
+        for c, e in zip(counts, [*expected, 0.0]):
+            a = max(eps, c / total)
+            out += (a - max(eps, e)) * math.log(a / max(eps, e))
+        return out
+
+    if isinstance(reference, dict):
+        edges = [float(x) for x in reference.get("edges", [])]
+        expected = [float(x) for x in reference.get("expected", [])]
+    else:
+        edges = [float(x) for x in reference]
+        expected = []
+
     n_bins = len(edges) - 1
     if n_bins < 1 or not live:
         return 0.0
-    # A degenerate reference grid (all edges equal) means the train feature was
-    # constant; PSI against a point mass is undefined and blows up to ~12. Treat
-    # it as "no measurable drift" rather than a false alarm (audit B4).
     if edges[-1] <= edges[0]:
-        return 0.0
+        return 0.0  # constant train feature: no reference distribution exists
+    if len(expected) != n_bins:
+        if len(set(edges)) != len(edges):
+            return 0.0  # tied edges without stored shares — cannot be scored honestly
+        expected = [1.0 / n_bins] * n_bins
+
     counts = [0] * n_bins
     for v in live:
         idx = bisect_right(edges, v) - 1
-        idx = max(0, min(n_bins - 1, idx))
-        counts[idx] += 1
+        counts[max(0, min(n_bins - 1, idx))] += 1
+
     total = len(live)
-    expected = 1.0 / n_bins
     out = 0.0
-    for c in counts:
-        actual = max(eps, c / total)
-        out += (actual - expected) * math.log(actual / expected)
+    for c, exp in zip(counts, expected):
+        a = max(eps, c / total)
+        e = max(eps, exp)
+        out += (a - e) * math.log(a / e)
     return out
 
 
