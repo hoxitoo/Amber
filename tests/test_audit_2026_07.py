@@ -21,12 +21,26 @@ from amber.signals.filters import base_rate_for, effective_prob_min
 
 
 class TestB3BaseRateGate(unittest.TestCase):
-    def test_lift_mode_uses_base_rate_when_configured(self):
+    def test_lift_is_applied_to_odds_not_probability(self):
+        """B7: a probability lift breaks at higher base rates — 2x a 0.32 base
+        rate demands 0.64, which a calibrated model never reaches, so nothing
+        fires. Odds lift stays selective and reachable at any base rate."""
         thr = {"prob_lift_min": 2.0, "prob_abs_floor": 0.12}
-        # 2x a 0.10 base rate = 0.20, above the floor
-        self.assertAlmostEqual(effective_prob_min(thr, 0.10, absolute_key="pump_prob_calibrated_min"), 0.20)
-        # 2x a 0.02 base rate = 0.04, so the absolute floor 0.12 wins
-        self.assertAlmostEqual(effective_prob_min(thr, 0.02, absolute_key="pump_prob_calibrated_min"), 0.12)
+        # 2x the odds of 0.10 -> 0.222 odds -> p = 0.1818
+        self.assertAlmostEqual(effective_prob_min(thr, 0.10, absolute_key="x"), 0.1818, places=3)
+        # at a 0.32 base rate the cut stays reachable instead of jumping to 0.64
+        cut = effective_prob_min(thr, 0.32, absolute_key="x")
+        self.assertAlmostEqual(cut, 0.4848, places=3)
+        self.assertGreater(cut, 0.32)  # still more selective than the base rate
+        # 2x the odds of 0.02 is tiny, so the absolute floor wins
+        self.assertAlmostEqual(effective_prob_min(thr, 0.02, absolute_key="x"), 0.12)
+
+    def test_cut_stays_below_one_for_every_base_rate(self):
+        thr = {"prob_lift_min": 3.0, "prob_abs_floor": 0.0}
+        for base in (0.01, 0.1, 0.3, 0.5, 0.8, 0.95):
+            cut = effective_prob_min(thr, base, absolute_key="x")
+            self.assertGreater(cut, base, f"cut must be selective at base={base}")
+            self.assertLess(cut, 1.0, f"cut must stay reachable at base={base}")
 
     def test_falls_back_to_absolute_cut_without_lift(self):
         thr = {"pump_prob_calibrated_min": 0.65}

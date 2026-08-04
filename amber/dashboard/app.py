@@ -121,6 +121,27 @@ def _num(value, fmt="{:.3f}", dash="—"):
         return dash
 
 
+def _fmt_span(ds: dict | None) -> str:
+    """Period the rolling training window covers.
+
+    The row count is fixed by `max_candles_per_symbol`, so showing it made the
+    dataset look frozen even while it was rebuilt hourly on fresh candles. The
+    covered period is what actually moves.
+    """
+    hours = (ds or {}).get("span_hours")
+    if not hours:
+        return _num((ds or {}).get("rows"), "{:,.0f}", "—").replace(",", " ")
+    return f"{hours:.0f} ч" if hours < 48 else f"{hours / 24:.1f} дн"
+
+
+def _ds_sub(ds: dict | None) -> str:
+    rows = (ds or {}).get("rows")
+    if not rows:
+        return "нет данных"
+    txt = f"{rows:,}".replace(",", " ")
+    return f"{txt} строк · скользящее окно" if (ds or {}).get("span_hours") else f"{txt} строк для обучения"
+
+
 def _kpi(label: str, value: str, sub: str = "", tone: str = "") -> str:
     return (
         f"<div class='amb-kpi {tone}'><div class='k'>{label}</div>"
@@ -190,7 +211,7 @@ st.markdown(
     + _kpi("Свежесть данных", age_txt, "последняя свеча", age_tone)
     + _kpi("Модель (eval)", model_txt, "статус метрик", model_tone)
     + _kpi("Символов", str(len(state["symbols"])), "в конфиге")
-    + _kpi("Датасет", _num(ds.get("rows") if ds else None, "{:,.0f}", "0").replace(",", " "), "строк для обучения")
+    + _kpi("Датасет", _fmt_span(ds), _ds_sub(ds))
     + _kpi("PR-AUC↑", _num(pr_up), pr_sub, "accent")
     + "</div>",
     unsafe_allow_html=True,

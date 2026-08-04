@@ -84,6 +84,7 @@ def run_training(
         models_root=models_root,
         datasets_root=datasets_root,
         holdout_ratio=float(cal_cfg.get("holdout_ratio", 0.2)),
+        method=str(cal_cfg.get("method", "platt")),
     )
     register_model(models_root=models_root, model_run_id=tr["run_id"], calibration_run_id=cal["run_id"])
     # Measure precision where the scanner actually fires, not at an absolute cut
@@ -91,11 +92,12 @@ def run_training(
     from amber.monitoring.reporting import _load_thresholds
 
     storage_paths = {k: str(v) for k, v in config.get("storage", {}).items() if isinstance(v, str)}
+    thresholds_cfg = _load_thresholds(storage_paths)
     ev = evaluate_model(
         models_root=models_root,
         datasets_root=datasets_root,
         threshold=float(eval_cfg.get("threshold", 0.7)),
-        thresholds=_load_thresholds(storage_paths) or None,
+        thresholds=thresholds_cfg or None,
     )
     for key in _METRIC_KEYS:
         if key in ev:
@@ -105,10 +107,9 @@ def run_training(
     # expected, so the dashboard can render it without recomputing per page view.
     try:
         from amber.backtest.backtester import event_backtest
-        from amber.monitoring.reporting import _load_thresholds, save_backtest_result
+        from amber.monitoring.reporting import save_backtest_result
 
-        storage_paths = {k: str(v) for k, v in config.get("storage", {}).items() if isinstance(v, str)}
-        bt = event_backtest(datasets_root, models_root, thresholds=_load_thresholds(storage_paths))
+        bt = event_backtest(datasets_root, models_root, thresholds=thresholds_cfg)
         save_backtest_result(logs_root, bt)
     except Exception as exc:  # a failed replay must not fail the retrain
         logger.warning("backtest publish failed: %s", exc)

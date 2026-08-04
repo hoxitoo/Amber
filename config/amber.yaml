@@ -67,14 +67,30 @@ alerts:
   # 'discord' needs AMBER_DISCORD_WEBHOOK.
 
 labeling:
-  horizon_steps: 5
-  horizon_steps_list: [5, 10, 20]
+  # Horizons and barrier are chosen from barrier-hitting statistics, not by feel.
+  # At the old 5-bar horizon a 0.42% barrier was reached only ~35% of the time,
+  # so ~58% of trades expired paying the fee for nothing, and break-even needed a
+  # 60.7% win rate against 56.0% achieved. Costs (0.09% round trip) are simply
+  # too large next to any move reachable in 5 minutes. Longer horizons fix both:
+  # the barrier widens, so the fixed cost matters proportionally less, and there
+  # is time to reach it. Simulated at 27-symbol volatility: 30 bars resolves ~72%
+  # with break-even 56.1%, 60 bars resolves ~75% with break-even 54.3%.
+  horizon_steps: 15
+  horizon_steps_list: [15, 30, 60]
   up_pct: 0.002
   down_pct: 0.002
   adaptive_thresholds: true
-  threshold_k: 2.5
+  # With scale_threshold_by_horizon the barrier is k * sigma * sqrt(horizon), so
+  # k reads as "standard deviations of the h-bar move" and every horizon asks an
+  # equally hard question. Previously one absolute barrier was applied to all
+  # horizons, which made the same 0.42% a stretch over 5 bars and easy over 20
+  # while the rows were pooled into a single dataset.
+  scale_threshold_by_horizon: true
+  threshold_k: 0.8
   threshold_vol_window: 60
-  threshold_floor: 0.003
+  # Floor kept above ~0.56%: below that the round-trip cost alone pushes the
+  # break-even win rate past 58%, i.e. the label is unprofitable by construction.
+  threshold_floor: 0.005
   threshold_cap: 0.05
   # drop warm-up rows whose long-lookback features are still degenerate
   min_warmup_bars: 60
@@ -95,6 +111,11 @@ model:
     calib_frac: 0.15
   calibration:
     holdout_ratio: 0.2
+    # platt = smooth logistic fit (continuous probabilities). isotonic is a
+    # step function that collapses to a few dozen levels on rare events, which
+    # made live signals repeat identical probabilities and left the model
+    # unable to rank symbols. Set to 'isotonic' to restore the old behaviour.
+    method: platt
   eval:
     threshold: 0.7
 

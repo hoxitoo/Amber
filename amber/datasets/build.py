@@ -65,12 +65,22 @@ def _adaptive_threshold(
     window: int,
     floor: float,
     cap: float,
+    horizon: int = 1,
 ) -> float:
-    # The volatility window ends at idx-1: the current bar's ret_1 is a model
-    # feature, and letting it also define the label threshold couples target to
-    # input (audit Q5). Lagging by one bar removes the direct coupling.
+    """Volatility-scaled barrier for one row and horizon.
+
+    The barrier grows with sqrt(horizon) because that is how far a diffusion
+    travels: `k` is then "how many standard deviations of the h-bar move", so
+    every horizon poses an equally hard question. Applying one absolute barrier
+    to all horizons made them mean different things — the same 0.42% is a stretch
+    over 5 bars and easy over 20 — while the rows were pooled into one dataset.
+
+    The volatility window ends at idx-1: the current bar's ret_1 is a model
+    feature, and letting it also define the label threshold couples target to
+    input (audit Q5). Lagging by one bar removes the direct coupling.
+    """
     vol = _rolling_vol(ret_1, end_idx=max(0, idx - 1), window=window)
-    return max(floor, min(cap, k * vol))
+    return max(floor, min(cap, k * vol * math.sqrt(max(1, horizon))))
 
 
 def _validate_horizons(horizon_steps: int, horizon_steps_list: list[int] | None) -> list[int]:
@@ -102,6 +112,7 @@ def build_dataset_from_config(config: dict[str, Any]) -> dict[str, int]:
         horizon_steps_list=[int(x) for x in labeling.get("horizon_steps_list", [])],
         min_warmup_bars=int(labeling.get("min_warmup_bars", 60)),
         max_candles_per_symbol=int(labeling.get("max_candles_per_symbol", 0)),
+        scale_threshold_by_horizon=bool(labeling.get("scale_threshold_by_horizon", True)),
     )
 
 
@@ -120,6 +131,7 @@ def build_dataset(
     horizon_steps_list: list[int] | None = None,
     min_warmup_bars: int = 0,
     max_candles_per_symbol: int = 0,
+    scale_threshold_by_horizon: bool = True,
 ) -> dict[str, int]:
     horizons = _validate_horizons(horizon_steps=horizon_steps, horizon_steps_list=horizon_steps_list)
 
@@ -174,26 +186,30 @@ def build_dataset(
         ]
 
         for i in clean_idx:
-            row_up = up_pct
-            row_down = down_pct
-            if adaptive_thresholds:
-                thr = _adaptive_threshold(
-                    ret_1=ret_1_vals,
-                    idx=i,
-                    k=threshold_k,
-                    window=threshold_vol_window,
-                    floor=threshold_floor,
-                    cap=threshold_cap,
-                )
-                row_up = thr
-                row_down = thr
-
             for horizon in horizons:
                 # Skip right-censored rows: without a full forward window the
                 # outcome is unknown, and labeling it "no event" biases the base
                 # rate downward.
                 if i + horizon >= len(prices):
                     continue
+
+                # Per-horizon barrier: computed inside this loop so each horizon
+                # gets a barrier matched to how far price can travel in it.
+                row_up = up_pct
+                row_down = down_pct
+                if adaptive_thresholds:
+                    thr = _adaptive_threshold(
+                        ret_1=ret_1_vals,
+                        idx=i,
+                        k=threshold_k,
+                        window=threshold_vol_window,
+                        floor=threshold_floor,
+                        cap=threshold_cap,
+                        horizon=horizon if scale_threshold_by_horizon else 1,
+                    )
+                    row_up = thr
+                    row_down = thr
+
                 future = prices[i : i + horizon + 1]
                 labels = label_event_path(future, up_pct=row_up, down_pct=row_down)
                 out_row = {name: rows[i].get(name, 0.0) for name in MODEL_FEATURES}
@@ -239,6 +255,7 @@ def build_dataset(
             "threshold_vol_window": threshold_vol_window,
             "threshold_floor": threshold_floor,
             "threshold_cap": threshold_cap,
+            "scale_threshold_by_horizon": scale_threshold_by_horizon,
         },
     )
     write_manifest(dataset_dir / "manifest.json", manifest)

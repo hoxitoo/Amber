@@ -32,16 +32,26 @@ def effective_prob_min(
 ) -> float:
     """Operating threshold for a calibrated head.
 
-    When `prob_lift_min` is configured, the cut is `max(prob_abs_floor,
-    prob_lift_min * base_rate)` — the model must be both above a floor and a
-    meaningful multiple over the unconditional base rate. Otherwise it falls back
-    to the legacy absolute cut under `absolute_key` (keeps old configs/tests
-    working). See audit 2026-07 finding B3.
+    When `prob_lift_min` is configured, the signal must clear both an absolute
+    floor and a lift over the head's unconditional base rate. The lift is applied
+    to the **odds**, not the probability: multiplying the probability breaks down
+    once the base rate is no longer small, because probability is capped at 1.
+    With a 0.32 base rate a 2x probability lift demands 0.64 — near-certainty
+    that a calibrated model almost never reaches, so nothing fires. In odds space
+    the same 2x asks for 0.485, which stays selective at any base rate and keeps
+    its usual reading ("twice the odds"). Falls back to the legacy absolute cut
+    under `absolute_key` when no lift is configured. See audit 2026-07 B3/B7.
     """
     lift_min = thresholds.get("prob_lift_min")
     if lift_min is not None:
         abs_floor = float(thresholds.get("prob_abs_floor", 0.0) or 0.0)
-        return max(abs_floor, float(lift_min) * float(base_rate))
+        p = min(max(float(base_rate), 0.0), 1.0)
+        if p <= 0.0:
+            return max(abs_floor, 0.0)
+        if p >= 1.0:
+            return 1.0
+        odds = float(lift_min) * (p / (1.0 - p))
+        return max(abs_floor, odds / (1.0 + odds))
     return float(thresholds.get(absolute_key, 0.65))
 
 

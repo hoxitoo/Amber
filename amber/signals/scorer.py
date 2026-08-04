@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from bisect import bisect_left
 from pathlib import Path
 from typing import Any
@@ -40,7 +41,14 @@ def _interp(x: list[float], y: list[float], v: float) -> float:
 
 def calibrated_prob(raw: float, calibration: dict[str, Any]) -> float:
     method = calibration.get("method", "identity")
-    if method == "isotonic":
+    if method == "platt":
+        # sigmoid(a * logit(raw) + b) — continuous, so distinct raw scores stay
+        # distinguishable instead of collapsing onto isotonic's few plateaus.
+        eps = 1e-6
+        r = min(1.0 - eps, max(eps, float(raw)))
+        z = float(calibration.get("a", 1.0)) * math.log(r / (1.0 - r)) + float(calibration.get("b", 0.0))
+        p = 1.0 / (1.0 + math.exp(-z)) if z >= 0 else math.exp(z) / (1.0 + math.exp(z))
+    elif method == "isotonic":
         p = _interp(list(calibration.get("x_thresholds", [])), list(calibration.get("y_thresholds", [])), raw)
     elif method == "scalar_mean_calibration":
         p = raw * float(calibration.get("scale", 1.0))

@@ -130,6 +130,34 @@ def dataset_info(datasets_dir: str) -> dict[str, Any] | None:
             )
         except json.JSONDecodeError:
             pass
+
+    # The dataset is a rolling window, so its row count is constant by design and
+    # a static number reads as "nothing is happening". Report the period it
+    # actually covers, which does move.
+    ds_file = d / "dataset.jsonl"
+    if ds_file.exists():
+        first_ts = last_ts = None
+        try:
+            with ds_file.open("r", encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        ts = int(json.loads(line).get("ts", 0) or 0)
+                    except (json.JSONDecodeError, TypeError, ValueError):
+                        continue
+                    if ts <= 0:
+                        continue
+                    if first_ts is None:
+                        first_ts = ts
+                    last_ts = ts
+        except OSError:
+            first_ts = last_ts = None
+        if first_ts and last_ts and last_ts > first_ts:
+            info["ts_from"] = first_ts
+            info["ts_to"] = last_ts
+            info["span_hours"] = (last_ts - first_ts) / 3_600_000
     return info
 
 
