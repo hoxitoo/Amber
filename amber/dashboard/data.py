@@ -247,3 +247,13 @@ def signal_top_drivers(sig: dict[str, Any], n: int = 3) -> str:
             name, value = next(iter(item.items()))
             parts.append(f"{name}={value:+.3f}")
     return ", ".join(parts) if parts else "—"
+
+
+def load_threshold_sweep(logs_dir: str) -> dict[str, Any] | None:
+    """Latest operating-threshold sweep, computed by the pipeline on a schedule."""
+    try:
+        from amber.backtest.tuning import load_sweep
+
+        return load_sweep(Path(logs_dir))
+    except Exception:
+        return None

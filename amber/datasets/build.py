@@ -186,6 +186,16 @@ def build_dataset(
         ]
 
         for i in clean_idx:
+            # The rolling volatility does not depend on the horizon, so it is
+            # computed once per row and only the sqrt(h) factor varies below —
+            # recomputing it per horizon tripled the cost of the hourly rebuild
+            # for an identical result.
+            row_vol = (
+                _rolling_vol(ret_1_vals, end_idx=max(0, i - 1), window=threshold_vol_window)
+                if adaptive_thresholds
+                else 0.0
+            )
+
             for horizon in horizons:
                 # Skip right-censored rows: without a full forward window the
                 # outcome is unknown, and labeling it "no event" biases the base
@@ -193,20 +203,13 @@ def build_dataset(
                 if i + horizon >= len(prices):
                     continue
 
-                # Per-horizon barrier: computed inside this loop so each horizon
-                # gets a barrier matched to how far price can travel in it.
+                # Per-horizon barrier: each horizon gets a barrier matched to how
+                # far price can travel in it.
                 row_up = up_pct
                 row_down = down_pct
                 if adaptive_thresholds:
-                    thr = _adaptive_threshold(
-                        ret_1=ret_1_vals,
-                        idx=i,
-                        k=threshold_k,
-                        window=threshold_vol_window,
-                        floor=threshold_floor,
-                        cap=threshold_cap,
-                        horizon=horizon if scale_threshold_by_horizon else 1,
-                    )
+                    scale = math.sqrt(horizon) if scale_threshold_by_horizon else 1.0
+                    thr = max(threshold_floor, min(threshold_cap, threshold_k * row_vol * scale))
                     row_up = thr
                     row_down = thr
 

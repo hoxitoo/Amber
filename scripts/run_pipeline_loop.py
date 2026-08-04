@@ -93,6 +93,29 @@ def _retrain(config: dict) -> None:
     )
 
 
+def _tune(config: dict) -> None:
+    from amber.backtest.tuning import save_sweep, sweep_thresholds
+
+    storage = config["storage"]
+    result = sweep_thresholds(Path(storage["models_dir"]), Path(storage["datasets_dir"]))
+    save_sweep(Path(storage["logs_dir"]), result)
+    if result.get("status") != "ok":
+        logger.info("threshold sweep: %s", result.get("reason", result.get("status")))
+        return
+    best = result.get("best")
+    if best:
+        logger.info(
+            "threshold sweep verdict=%s best lift=%s dir=%s validation PF=%.2f exp=%+.2f bps",
+            result["verdict"],
+            best["prob_lift_min"],
+            best["directional_score_min"],
+            best["validation"]["profit_factor"],
+            best["validation"]["expectancy"] * 1e4,
+        )
+    else:
+        logger.info("threshold sweep verdict=%s", result.get("verdict"))
+
+
 def main() -> None:
     cfg = ConfigLoader(Path.cwd()).load_yaml("config/amber.yaml")
     setup_logging(cfg.get("run", {}).get("log_level", "INFO"))
@@ -123,6 +146,9 @@ def main() -> None:
     if has_model:
         logger.info("existing model found; first retrain in %s min (restart-safe)", retrain_min)
 
+    tune_min = int(pipeline_cfg.get("tune_min", 1440))
+    last_tune = 0.0
+
     while True:
         _retention_sweep(cfg)
 
@@ -141,6 +167,17 @@ def main() -> None:
             except Exception as exc:
                 logger.error("auto-retrain failed: %s", exc)
             last_retrain = now
+
+        # Threshold sweep: computed on a schedule so the operating point can be
+        # reviewed without an SSH session. It only ever *reports* — adopting
+        # whatever validates on any given day would be multiple testing, so the
+        # decision stays with the operator (one click in the dashboard).
+        if tune_min > 0 and (now - last_tune) >= tune_min * 60:
+            try:
+                _tune(cfg)
+            except Exception as exc:
+                logger.info("threshold sweep skipped: %s", exc)
+            last_tune = now
 
         time.sleep(interval)
 

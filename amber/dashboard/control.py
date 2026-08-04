@@ -178,6 +178,29 @@ def set_symbols(project_root: Path, symbols: list[str]) -> list[str]:
     return cleaned
 
 
+def apply_thresholds(project_root: Path, prob_lift_min: float, directional_score_min: float) -> dict[str, float]:
+    """Adopt a swept operating point.
+
+    Written to `config/thresholds.local.yaml`, the gitignored override merged
+    over the tracked defaults, so it survives `git pull`. Applying stays an
+    explicit action: a sweep that re-runs daily and auto-adopts whatever happens
+    to validate is multiple testing, and would quietly fit the backtest.
+    """
+    import yaml
+
+    local_path = Path(project_root) / "config" / "thresholds.local.yaml"
+    data: dict = {}
+    if local_path.is_file():
+        loaded = yaml.safe_load(local_path.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict):
+            data = loaded
+    thresholds = data.setdefault("thresholds", {})
+    thresholds["prob_lift_min"] = float(prob_lift_min)
+    thresholds["directional_score_min"] = float(directional_score_min)
+    local_path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    return {"prob_lift_min": float(prob_lift_min), "directional_score_min": float(directional_score_min)}
+
+
 # Command registry used by the dashboard control panel.
 SERVICES: dict[str, dict[str, Any]] = {
     "ws_collector": {"label": "WS-коллектор (сбор сырых данных)", "argv": ["scripts/run_ws_collector.py"]},

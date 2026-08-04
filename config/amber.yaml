@@ -60,6 +60,11 @@ scanner:
 pipeline:
   loop_sec: 60      # how often the auto-pipeline runs normalize + features
   retrain_min: 60   # how often it rebuilds the dataset + retrains (0 = off)
+  # How often the operating-threshold sweep runs (minutes, 0 = off). It only
+  # reports: the result appears on the Модель tab with an explicit apply
+  # button, because auto-adopting whatever validates on a given day would be
+  # multiple testing dressed up as tuning.
+  tune_min: 1440
 alerts:
   channels:
   - console

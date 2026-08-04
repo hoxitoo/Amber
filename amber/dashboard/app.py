@@ -313,6 +313,58 @@ with tab_model:
                 f"лаг входа: {bt.get('entry_lag_bars', 0)} бар"
             )
 
+        # --- Threshold sweep -------------------------------------------------
+        _section("Подбор порогов", "отбор на калибровочном сегменте · проверка на тестовом")
+        sweep = D.load_threshold_sweep(state["storage"]["logs_dir"])
+        if sweep is None:
+            st.info("Развёртка порогов ещё не запускалась — она выполняется по расписанию (pipeline.tune_min).")
+        elif sweep.get("status") != "ok":
+            st.info(f"Развёртка недоступна: {sweep.get('reason', sweep.get('status'))}")
+        else:
+            verdict = sweep.get("verdict")
+            text = sweep.get("verdict_text", "")
+            (st.success if verdict == "holds" else st.warning)(text)
+            best = sweep.get("best")
+            if best:
+                v, s = best["validation"], best["selection"]
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("prob_lift_min", f"{best['prob_lift_min']:.1f}")
+                c2.metric("directional_min", f"{best['directional_score_min']:.2f}")
+                c3.metric("PF на проверке", _num(v.get("profit_factor"), "{:.2f}"))
+                c4.metric("Матожидание", f"{v.get('expectancy', 0) * 1e4:+.2f} bps")
+                st.caption(
+                    f"отбор: {s['trades']:,} сделок, PF {s['profit_factor']:.2f} · "
+                    f"проверка: {v['trades']:,} сделок, PF {v['profit_factor']:.2f} · "
+                    f"посчитано {sweep.get('computed_at', '')[:16].replace('T', ' ')} UTC"
+                )
+                if verdict == "holds":
+                    if st.button("Применить эти пороги", type="primary"):
+                        saved = C.apply_thresholds(root, best["prob_lift_min"], best["directional_score_min"])
+                        st.success(f"Записано в config/thresholds.local.yaml: {saved}. Перезапусти сканер.")
+                        st.cache_data.clear()
+                else:
+                    st.caption(
+                        "Кнопка применения намеренно скрыта: точка не подтвердилась на данных, "
+                        "которых не видела."
+                    )
+            with st.expander("Вся сетка"):
+                st.dataframe(
+                    pd.DataFrame([
+                        {
+                            "lift": g["prob_lift_min"],
+                            "dir": g["directional_score_min"],
+                            "отбор: сделок": g["selection"]["trades"],
+                            "отбор: PF": round(g["selection"]["profit_factor"], 2),
+                            "проверка: сделок": g["validation"]["trades"],
+                            "проверка: PF": round(g["validation"]["profit_factor"], 2),
+                            "проверка: bps": round(g["validation"]["expectancy"] * 1e4, 2),
+                        }
+                        for g in sweep.get("grid", [])
+                    ]),
+                    width="stretch",
+                    hide_index=True,
+                )
+
 # --- Data & drift ------------------------------------------------------------
 with tab_data:
     _section("Собранные данные", "нормализованные свечи по символам")
