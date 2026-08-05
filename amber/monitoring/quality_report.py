@@ -129,10 +129,15 @@ def _feature_psi(
                     live_by_feature[name].append(float(row.get(name, 0.0) or 0.0))
 
     per_feature: dict[str, float] = {}
-    for name, edges in reference.items():
+    for name, ref in reference.items():
         live = live_by_feature.get(name, [])[-window:]
         if len(live) >= 20:
-            per_feature[name] = psi_from_quantile_reference(list(edges), live)
+            # Pass the reference through as-is: it is {"edges", "expected"} or
+            # {"values", "expected"} for current models and a bare edge list for
+            # older ones, and psi_from_quantile_reference handles each. Wrapping
+            # it in list() turned a dict into its own keys and blew up on
+            # float("edges"), which took down the whole system report.
+            per_feature[name] = psi_from_quantile_reference(ref, live)
 
     if not per_feature:
         return {"level": "unavailable", "max_psi": None, "per_feature": {}, "reason": "not_enough_live_rows"}
