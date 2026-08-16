@@ -18,11 +18,11 @@ import json
 from pathlib import Path
 from typing import Any
 
+from amber.backtest.backtester import operating_point, replay_with_probs, score_rows
 from amber.models.dataset_io import load_latest_dataset_rows, order_with_pseudo_time, split_rows
 from amber.models.eval import _load_latest_calibration
-from amber.models.infer import infer_row_prob, load_latest_model
-from amber.signals.filters import base_rate_for, effective_prob_min
-from amber.signals.scorer import calibrated_prob_for_target, coherent_pump_dump
+from amber.models.infer import load_latest_model
+from amber.signals.filters import base_rate_for
 
 SWEEP_FILE = "threshold_sweep.json"
 DEFAULT_LIFTS = (1.2, 1.5, 2.0, 2.5, 3.0)
@@ -36,44 +36,23 @@ def _replay(
     up_min: float,
     dn_min: float,
     dir_min: float,
+    spread_max: float,
     cost: float,
 ) -> dict[str, float]:
-    """Book trades the way the backtester does: 1-bar entry lag, one open
-    position per symbol, both barriers, cost charged on every trade."""
-    pnl: list[float] = []
-    tp = sl = timeout = 0
-    open_until: dict[str, int] = {}
-    pending: dict[str, str] = {}
+    """Score one grid point through the *same* trading rules the backtest uses.
 
-    for r, (up, dn) in zip(rows, probs):
-        sym = str(r.get("symbol", ""))
-        if sym in pending:
-            side = pending.pop(sym)
-            hit = int(r.get("up_hit", 0)) if side == "pump" else int(r.get("down_hit", 0))
-            miss = int(r.get("down_hit", 0)) if side == "pump" else int(r.get("up_hit", 0))
-            target = float(r.get("up_pct", 0.002))
-            if hit:
-                pnl.append(target - cost)
-                tp += 1
-            elif miss:
-                pnl.append(-target - cost)
-                sl += 1
-            else:
-                pnl.append(-cost)
-                timeout += 1
-            open_until[sym] = int(r.get("horizon_steps", 0) or 0)
-            continue
-        if open_until.get(sym, 0) > 0:
-            open_until[sym] -= 1
-            continue
-        if up >= up_min and (up - dn) >= dir_min:
-            pending[sym] = "pump"
-        elif dn >= dn_min and (dn - up) >= dir_min:
-            pending[sym] = "dump"
-
+    This delegates rather than reimplementing: the sweep used to keep its own
+    copy, which had silently lost the spread filter, so it was validating a gate
+    the live scanner does not run and could bless a threshold that behaves
+    differently in production.
+    """
+    pnl, counts, _extra = replay_with_probs(
+        rows, probs, up_min=up_min, down_min=dn_min, dir_min=dir_min, spread_max=spread_max, cost=cost
+    )
     n = len(pnl)
     if n == 0:
         return {"trades": 0, "win_rate": 0.0, "profit_factor": 0.0, "expectancy": 0.0, "resolved": 0.0}
+    tp, sl = counts["TP"], counts["SL"]
     gross_profit = sum(p for p in pnl if p > 0)
     gross_loss = abs(sum(p for p in pnl if p < 0))
     return {
@@ -93,6 +72,7 @@ def sweep_thresholds(
     fee_bps: float = 4.0,
     lifts: tuple[float, ...] = DEFAULT_LIFTS,
     dir_mins: tuple[float, ...] = DEFAULT_DIRS,
+    live_thresholds: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Sweep the grid, returning every point plus a verdict on the best one."""
     model = load_latest_model(models_root)
@@ -116,29 +96,22 @@ def sweep_thresholds(
     base_up = base_rate_for(model, "pump")
     base_dn = base_rate_for(model, "dump")
 
-    def score(seg_rows: list[dict[str, Any]]) -> list[tuple[float, float]]:
-        out = []
-        for r in seg_rows:
-            up = calibrated_prob_for_target(infer_row_prob(model, r, target="pump"), calib, target="pump")
-            dn = calibrated_prob_for_target(infer_row_prob(model, r, target="dump"), calib, target="dump")
-            out.append(coherent_pump_dump(up, dn))
-        return out
-
-    p_select, p_verify = score(select), score(verify)
+    p_select = score_rows(select, model, calib)
+    p_verify = score_rows(verify, model, calib)
+    # The sweep must model the gate that actually runs, spread filter included.
+    spread_max = operating_point(model, live_thresholds or {})["spread_max"]
 
     grid: list[dict[str, Any]] = []
     for lift in lifts:
-        thr = {"prob_lift_min": lift, "prob_abs_floor": 0.0}
-        up_min = effective_prob_min(thr, base_up, absolute_key="pump_prob_calibrated_min")
-        dn_min = effective_prob_min(thr, base_dn, absolute_key="dump_prob_calibrated_min")
+        op = operating_point(model, {**(live_thresholds or {}), "prob_lift_min": lift})
         for dir_min in dir_mins:
             grid.append({
                 "prob_lift_min": lift,
                 "directional_score_min": dir_min,
-                "up_min": up_min,
-                "down_min": dn_min,
-                "selection": _replay(select, p_select, up_min, dn_min, dir_min, cost),
-                "validation": _replay(verify, p_verify, up_min, dn_min, dir_min, cost),
+                "up_min": op["up_min"],
+                "down_min": op["down_min"],
+                "selection": _replay(select, p_select, op["up_min"], op["down_min"], dir_min, spread_max, cost),
+                "validation": _replay(verify, p_verify, op["up_min"], op["down_min"], dir_min, spread_max, cost),
             })
 
     eligible = [g for g in grid if g["selection"]["trades"] >= MIN_TRADES]
@@ -150,6 +123,7 @@ def sweep_thresholds(
         "dataset_run": dataset_run,
         "horizon_steps": horizon,
         "cost_bps": slippage_bps + fee_bps,
+        "spread_bps_max": spread_max,
         "base_rate_up": base_up,
         "base_rate_down": base_dn,
         "selection_rows": len(select),

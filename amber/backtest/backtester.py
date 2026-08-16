@@ -76,32 +76,29 @@ def _label_replay(rows: list[dict[str, Any]], cost: float) -> tuple[list[float],
     return pnls, counts
 
 
-def _signal_replay(
+def replay_with_probs(
     rows: list[dict[str, Any]],
-    model: dict[str, Any],
-    calibration: dict[str, Any],
-    thresholds: dict[str, Any],
+    probs: list[tuple[float, float]],
+    *,
+    up_min: float,
+    down_min: float,
+    dir_min: float,
+    spread_max: float,
     cost: float,
 ) -> tuple[list[float], dict[str, int], dict[str, Any]]:
-    """Model-driven mode: trade only where calibrated probabilities pass the
-    real threshold chain; one open trade per symbol at a time.
+    """Book trades for rows whose calibrated probabilities are already known.
 
-    Execution realism (audit T2): the decision is made on bar i, but the entry
-    is booked from bar i+1 — live you cannot fill at the close of the bar whose
-    features you just observed. The outcome therefore comes from the *next*
-    row's forward window.
+    The single implementation of the trading rules, shared by the promotion-gate
+    backtest and the threshold sweep. They previously each had their own copy and
+    drifted apart — the sweep had lost the spread filter, so it validated a gate
+    the live scanner does not use and could recommend a threshold that behaves
+    differently in production.
+
+    Execution realism (audit T2): the decision is made on bar i, but the entry is
+    booked from bar i+1 — live you cannot fill at the close of the bar whose
+    features you just observed. The outcome therefore comes from the *next* row's
+    forward window.
     """
-    from amber.models.infer import infer_row_prob
-    from amber.signals.filters import base_rate_for, effective_prob_min
-    from amber.signals.scorer import calibrated_prob_for_target, coherent_pump_dump
-
-    # Same operating-threshold logic as the live scanner (audit B3): base-rate
-    # relative when `prob_lift_min` is set, else the legacy absolute cut.
-    up_min = effective_prob_min(thresholds, base_rate_for(model, "pump"), absolute_key="pump_prob_calibrated_min")
-    down_min = effective_prob_min(thresholds, base_rate_for(model, "dump"), absolute_key="dump_prob_calibrated_min")
-    dir_min = float(thresholds.get("directional_score_min", 0.2))
-    spread_max = float(thresholds.get("spread_bps_max", 30.0))
-
     pnls: list[float] = []
     counts = {"TP": 0, "SL": 0, "Timeout": 0}
     directions = {"pump": 0, "dump": 0}
@@ -109,7 +106,7 @@ def _signal_replay(
     pending: dict[str, str] = {}  # symbol -> direction decided on the previous bar
     evaluated = 0
 
-    for r in rows:
+    for r, (up_cal, down_cal) in zip(rows, probs):
         symbol = str(r.get("symbol", ""))
 
         if symbol in pending:
@@ -143,10 +140,6 @@ def _signal_replay(
         if float(r.get("spread_bps", 0.0) or 0.0) > spread_max:
             continue
 
-        up_cal = calibrated_prob_for_target(infer_row_prob(model, r, target="pump"), calibration, target="pump")
-        down_cal = calibrated_prob_for_target(infer_row_prob(model, r, target="dump"), calibration, target="dump")
-        up_cal, down_cal = coherent_pump_dump(up_cal, down_cal)
-
         if up_cal >= up_min and (up_cal - down_cal) >= dir_min:
             pending[symbol] = "pump"
         elif down_cal >= down_min and (down_cal - up_cal) >= dir_min:
@@ -160,6 +153,54 @@ def _signal_replay(
         "trades_dump": directions["dump"],
     }
     return pnls, counts, extra
+
+
+def score_rows(
+    rows: list[dict[str, Any]], model: dict[str, Any], calibration: dict[str, Any]
+) -> list[tuple[float, float]]:
+    """Calibrated (pump, dump) probabilities per row, jointly normalized."""
+    from amber.models.infer import infer_row_prob
+    from amber.signals.scorer import calibrated_prob_for_target, coherent_pump_dump
+
+    out: list[tuple[float, float]] = []
+    for r in rows:
+        up = calibrated_prob_for_target(infer_row_prob(model, r, target="pump"), calibration, target="pump")
+        dn = calibrated_prob_for_target(infer_row_prob(model, r, target="dump"), calibration, target="dump")
+        out.append(coherent_pump_dump(up, dn))
+    return out
+
+
+def operating_point(model: dict[str, Any], thresholds: dict[str, Any]) -> dict[str, float]:
+    """The cut the live scanner uses, derived once so every replay shares it."""
+    from amber.signals.filters import base_rate_for, effective_prob_min
+
+    return {
+        "up_min": effective_prob_min(thresholds, base_rate_for(model, "pump"), absolute_key="pump_prob_calibrated_min"),
+        "down_min": effective_prob_min(
+            thresholds, base_rate_for(model, "dump"), absolute_key="dump_prob_calibrated_min"
+        ),
+        "dir_min": float(thresholds.get("directional_score_min", 0.2)),
+        "spread_max": float(thresholds.get("spread_bps_max", 30.0)),
+    }
+
+
+def _signal_replay(
+    rows: list[dict[str, Any]],
+    model: dict[str, Any],
+    calibration: dict[str, Any],
+    thresholds: dict[str, Any],
+    cost: float,
+) -> tuple[list[float], dict[str, int], dict[str, Any]]:
+    op = operating_point(model, thresholds)
+    return replay_with_probs(
+        rows,
+        score_rows(rows, model, calibration),
+        up_min=op["up_min"],
+        down_min=op["down_min"],
+        dir_min=op["dir_min"],
+        spread_max=op["spread_max"],
+        cost=cost,
+    )
 
 
 def event_backtest(

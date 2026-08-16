@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amber.backtest.tuning import save_sweep, sweep_thresholds
 from amber.common.config import ConfigLoader
+from amber.monitoring.reporting import _load_thresholds
 
 
 def main() -> None:
@@ -31,6 +32,7 @@ def main() -> None:
         Path(storage["datasets_dir"]),
         slippage_bps=args.slippage_bps,
         fee_bps=args.fee_bps,
+        live_thresholds=_load_thresholds({k: str(v) for k, v in storage.items() if isinstance(v, str)}),
     )
     if res.get("status") != "ok":
         print(f"Развёртка недоступна: {res.get('reason', res.get('status'))}")

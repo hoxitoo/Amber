@@ -95,9 +95,13 @@ def _retrain(config: dict) -> None:
 
 def _tune(config: dict) -> None:
     from amber.backtest.tuning import save_sweep, sweep_thresholds
+    from amber.monitoring.reporting import _load_thresholds
 
     storage = config["storage"]
-    result = sweep_thresholds(Path(storage["models_dir"]), Path(storage["datasets_dir"]))
+    live = _load_thresholds({k: str(v) for k, v in storage.items() if isinstance(v, str)})
+    result = sweep_thresholds(
+        Path(storage["models_dir"]), Path(storage["datasets_dir"]), live_thresholds=live
+    )
     save_sweep(Path(storage["logs_dir"]), result)
     if result.get("status") != "ok":
         logger.info("threshold sweep: %s", result.get("reason", result.get("status")))

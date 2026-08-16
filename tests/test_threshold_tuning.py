@@ -87,3 +87,53 @@ class TestVerdictLogic(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSweepMatchesTheLiveGate(unittest.TestCase):
+    """The sweep and the promotion-gate backtest must apply identical rules.
+
+    They used to hold separate copies, and the sweep's had lost the spread
+    filter — so it validated a gate the scanner does not run and could recommend
+    a threshold that behaves differently in production.
+    """
+
+    def _rows(self, n=400, spread=1.0):
+        return [
+            {
+                "symbol": "BTCUSDT", "ts": 1_700_000_000_000 + i * 60_000,
+                "up_hit": i % 3 == 0, "down_hit": i % 5 == 0,
+                "up_pct": 0.008, "down_pct": 0.008, "horizon_steps": 15,
+                "spread_bps": spread,
+            }
+            for i in range(n)
+        ]
+
+    def test_spread_filter_is_applied_by_the_sweep(self):
+        from amber.backtest.tuning import _replay
+
+        rows = self._rows(spread=99.0)  # every row above any sane spread cap
+        probs = [(0.9, 0.1)] * len(rows)
+        wide = _replay(rows, probs, 0.5, 0.5, 0.0, spread_max=1000.0, cost=0.0009)
+        tight = _replay(rows, probs, 0.5, 0.5, 0.0, spread_max=30.0, cost=0.0009)
+        self.assertGreater(wide["trades"], 0)
+        self.assertEqual(tight["trades"], 0, "sweep ignored the spread filter the scanner enforces")
+
+    def test_sweep_and_backtest_book_identical_trades(self):
+        from amber.backtest.backtester import replay_with_probs
+        from amber.backtest.tuning import _replay
+
+        rows = self._rows(spread=5.0)
+        probs = [(0.9, 0.1) if i % 4 else (0.1, 0.9) for i in range(len(rows))]
+        pnl, counts, _ = replay_with_probs(
+            rows, probs, up_min=0.5, down_min=0.5, dir_min=0.0, spread_max=30.0, cost=0.0009
+        )
+        swept = _replay(rows, probs, 0.5, 0.5, 0.0, spread_max=30.0, cost=0.0009)
+        self.assertEqual(swept["trades"], len(pnl))
+        self.assertAlmostEqual(swept["expectancy"], sum(pnl) / len(pnl), places=12)
+        self.assertAlmostEqual(swept["win_rate"], counts["TP"] / (counts["TP"] + counts["SL"]), places=12)
+
+    def test_backtester_exposes_one_shared_replay(self):
+        """Guard against a second copy reappearing."""
+        src = (Path(__file__).resolve().parents[1] / "amber" / "backtest" / "tuning.py").read_text(encoding="utf-8")
+        self.assertIn("replay_with_probs", src)
+        self.assertNotIn("counts = {\"TP\"", src)
