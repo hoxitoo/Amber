@@ -35,13 +35,9 @@ def _predict_matrix(model: dict[str, Any], head_name: str, matrix: list[list[flo
     if kind == "constant":
         return [float(head.get("prob", 0.0))] * len(matrix)
     if kind == "lightgbm":
-        import lightgbm as lgb
+        from amber.models.infer import _lgb_booster
 
-        booster = head.get("_booster_obj")
-        if booster is None:
-            booster = lgb.Booster(model_str=head["booster"])
-            head["_booster_obj"] = booster
-        return [float(p) for p in booster.predict(matrix)]
+        return [float(p) for p in _lgb_booster(head).predict(matrix)]
 
     import math
 

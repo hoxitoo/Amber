@@ -111,8 +111,10 @@ def run_training(
         from amber.models.importance import correlated_pairs, permutation_importance
         from amber.models.infer import load_latest_model
 
-        ds_rows, _ = load_latest_dataset_rows(datasets_root)
-        ordered, pts, _mode = order_with_pseudo_time(ds_rows)
+        # Reuse the rows already loaded at the top of this function: the dataset
+        # is several hundred MB and was being materialised a sixth time per
+        # retrain purely for this diagnostic, on a box that has already hit OOM.
+        ordered, pts, _mode = order_with_pseudo_time(rows)
         trained = load_latest_model(models_root)
         oos = split_rows(ordered, pts, trained["splits"])["test"] if trained.get("splits") else ordered
         if oos:

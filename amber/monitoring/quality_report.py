@@ -8,6 +8,7 @@ import math
 from pathlib import Path
 from typing import Any
 
+from amber.common.jsonl import read_tail
 from amber.monitoring.drift import PredictionBiasMonitor, RollingAUCMonitor, psi_from_quantile_reference
 
 logger = logging.getLogger(__name__)
@@ -120,17 +121,27 @@ def _feature_psi(
     if not isinstance(reference, dict) or not reference:
         return {"level": "unavailable", "max_psi": None, "per_feature": {}, "reason": "model_has_no_train_reference"}
 
+    # `window` rows from EACH symbol, all of them kept. Trimming the pooled list
+    # to `window` afterwards silently discarded every symbol but the last one
+    # alphabetically, so this PSI described a single coin while claiming to
+    # describe the universe — and it never raised, it just returned a plausible
+    # number.
     live_by_feature: dict[str, list[float]] = {name: [] for name in reference}
     features_dir = features_root / "features"
+    symbols_seen = 0
     if features_dir.exists():
         for part in sorted(features_dir.glob("*/part-*.jsonl")):
-            for row in _read_jsonl_tolerant(part)[-window:]:
+            rows = read_tail(part, window)
+            if not rows:
+                continue
+            symbols_seen += 1
+            for row in rows:
                 for name in reference:
                     live_by_feature[name].append(float(row.get(name, 0.0) or 0.0))
 
     per_feature: dict[str, float] = {}
     for name, ref in reference.items():
-        live = live_by_feature.get(name, [])[-window:]
+        live = live_by_feature.get(name, [])
         if len(live) >= 20:
             # Pass the reference through as-is: it is {"edges", "expected"} or
             # {"values", "expected"} for current models and a bare edge list for
@@ -143,7 +154,13 @@ def _feature_psi(
         return {"level": "unavailable", "max_psi": None, "per_feature": {}, "reason": "not_enough_live_rows"}
     max_psi = max(per_feature.values())
     level = "high" if max_psi > 0.2 else "medium" if max_psi > 0.1 else "low"
-    return {"level": level, "max_psi": max_psi, "per_feature": per_feature, "reason": "ok"}
+    return {
+        "level": level,
+        "max_psi": max_psi,
+        "per_feature": per_feature,
+        "symbols": symbols_seen,
+        "reason": "ok",
+    }
 
 
 def build_quality_report(

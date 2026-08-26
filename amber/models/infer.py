@@ -39,13 +39,26 @@ def _sigmoid(z: float) -> float:
     return e / (1.0 + e)
 
 
-def _lgb_booster(head: dict[str, Any]) -> Any:
-    booster = head.get("_booster_obj")
-    if booster is None:
-        import lightgbm as lgb
+# Boosters are cached by the model string rather than inside the head dict.
+# Stashing the live object in the dict made json.dumps(model) fail afterwards,
+# so any code that scored a model before saving it would break the retrain. That
+# has been latent: train_model happens to save before it scores.
+_BOOSTER_CACHE: dict[int, Any] = {}
 
-        booster = lgb.Booster(model_str=head["booster"])
-        head["_booster_obj"] = booster
+
+def _lgb_booster(head: dict[str, Any]) -> Any:
+    model_str = head["booster"]
+    key = id(head)
+    cached = _BOOSTER_CACHE.get(key)
+    if cached is not None and cached[0] is model_str:
+        return cached[1]
+
+    import lightgbm as lgb
+
+    booster = lgb.Booster(model_str=model_str)
+    if len(_BOOSTER_CACHE) > 32:  # keep it from growing across many models
+        _BOOSTER_CACHE.clear()
+    _BOOSTER_CACHE[key] = (model_str, booster)
     return booster
 
 

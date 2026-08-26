@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 import time
@@ -9,6 +8,7 @@ from typing import Any
 from amber.alerts.router import AlertRateLimiter, route_alert
 from amber.common.audit_log import log_universe
 from amber.common.config import ConfigLoader
+from amber.common.jsonl import read_last
 from amber.common.locks import AlreadyRunning, SingleInstanceLock
 from amber.common.logging import setup_logging
 from amber.common.types import SignalV1
@@ -30,17 +30,10 @@ def _read_latest_feature_rows(features_root: Path, allowed_symbols: set[str] | N
     for symbol, file in sorted(by_symbol.items()):
         if allowed_symbols is not None and symbol not in allowed_symbols:
             continue
-        lines = file.read_text(encoding="utf-8").splitlines()
-        if not lines:
-            continue
-
-        parsed: dict[str, Any] | None = None
-        for raw in reversed(lines):
-            try:
-                parsed = json.loads(raw)
-                break
-            except json.JSONDecodeError:
-                continue
+        # Stream the tail: these files hold tens of thousands of rows and this
+        # runs for every symbol on every scan, so reading them whole made the
+        # scan cost grow with accumulated history.
+        parsed = read_last(file)
         if parsed is None:
             logger.warning("skip feature file with invalid JSONL tail: %s", file)
             continue
