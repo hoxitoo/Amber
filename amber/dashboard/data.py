@@ -257,3 +257,25 @@ def load_threshold_sweep(logs_dir: str) -> dict[str, Any] | None:
         return load_sweep(Path(logs_dir))
     except Exception:
         return None
+
+
+def load_feature_importance(logs_dir: str) -> dict[str, Any] | None:
+    """Permutation importance published by the retrain (audit M3)."""
+    path = Path(logs_dir) / "feature_importance.json"
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def load_calibration_health(logs_dir: str) -> dict[str, Any] | None:
+    """Calibration drift / rolling recalibration status (audit M5)."""
+    try:
+        from amber.models.recalibrate import load_health
+
+        return load_health(Path(logs_dir))
+    except Exception:
+        return None

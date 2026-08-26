@@ -65,6 +65,11 @@ pipeline:
   # button, because auto-adopting whatever validates on a given day would be
   # multiple testing dressed up as tuning.
   tune_min: 1440
+  # Calibration goes stale faster than the model itself: it maps scores to an
+  # event frequency, and that frequency moves with the market regime. Refitting
+  # is two coefficients on a few thousand rows, so it runs far more often than
+  # a retrain (minutes, 0 = off).
+  recal_min: 20
 alerts:
   channels:
   - console

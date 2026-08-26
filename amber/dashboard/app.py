@@ -313,6 +313,64 @@ with tab_model:
                 f"лаг входа: {bt.get('entry_lag_bars', 0)} бар"
             )
 
+        # --- Calibration health (M5) -----------------------------------------
+        _section("Калибровка", "насколько «30%» действительно означает 30% · перекалибровка между переобучениями")
+        health = D.load_calibration_health(state["storage"]["logs_dir"])
+        if health is None or health.get("status") != "ok":
+            st.info("Проверка калибровки ещё не запускалась (идёт по расписанию pipeline.recal_min).")
+        else:
+            cols = st.columns(len(health.get("heads", {})) * 2 or 2)
+            i = 0
+            for target, rep in health.get("heads", {}).items():
+                before = rep.get("before", {})
+                after = rep.get("after") if rep.get("refit") else None
+                label = "pump" if target == "pump" else "dump"
+                cols[i].metric(
+                    f"ECE {label}",
+                    _num((after or before).get("ece"), "{:.4f}"),
+                    delta=(f"было {before.get('ece', 0):.4f}" if after else None),
+                    delta_color="inverse",
+                )
+                cols[i + 1].metric(
+                    f"Смещение {label}",
+                    _num((after or before).get("bias"), "{:+.4f}"),
+                    delta=(f"было {before.get('bias', 0):+.4f}" if after else None),
+                    delta_color="inverse",
+                )
+                i += 2
+            if health.get("refit"):
+                st.success("Калибровка отставала от текущего режима и была пересчитана на свежих данных.")
+            else:
+                st.caption("Калибровка соответствует текущему режиму — пересчёт не потребовался.")
+            st.caption(
+                f"строк: {health.get('rows', 0):,} · порог ECE {health.get('ece_threshold')} · "
+                f"обновлено {str(health.get('computed_at', ''))[:16].replace('T', ' ')} UTC".replace(",", " ")
+            )
+
+        # --- Feature importance (M3) -----------------------------------------
+        _section("Важность признаков", "перестановочный тест на test-сегменте · что модель реально использует")
+        imp = D.load_feature_importance(state["storage"]["logs_dir"])
+        if imp is None or imp.get("status") != "ok":
+            st.info("Важность признаков считается при очередном переобучении.")
+        else:
+            i1, i2, i3 = st.columns(3)
+            i1.metric("Несут сигнал", f"{imp.get('carrying_count', 0)} / {len(imp.get('scores', []))}")
+            i2.metric("Доля топ-5", f"{imp.get('top5_share_pct', 0):.0f}%")
+            i3.metric("Бесполезных", str(len(imp.get("useless_features", []))))
+            st.dataframe(
+                pd.DataFrame([
+                    {"признак": s["feature"], "важность": round(s["importance"], 5),
+                     "% от базы": round(s["importance_pct"], 2),
+                     "статус": "не используется" if s["useless"] else ""}
+                    for s in imp.get("scores", [])
+                ]),
+                width="stretch", hide_index=True, height=320,
+            )
+            pairs = imp.get("correlated_pairs", [])
+            if pairs:
+                txt = ", ".join(f"{p['a']}~{p['b']} ({p['corr']:+.2f})" for p in pairs[:5])
+                st.caption(f"Дублирующие друг друга признаки: {txt}")
+
         # --- Threshold sweep -------------------------------------------------
         _section("Подбор порогов", "отбор на калибровочном сегменте · проверка на тестовом")
         sweep = D.load_threshold_sweep(state["storage"]["logs_dir"])

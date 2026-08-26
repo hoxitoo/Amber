@@ -1,6 +1,6 @@
 # Project Amber — Roadmap
 
-_Last updated: 2026-07-26_
+_Last updated: 2026-08-26_
 
 Amber is a local-first ML scanner for Bybit futures that predicts event
 probabilities (pump/dump) and emits alerts. Not an auto-trader.
@@ -86,8 +86,16 @@ See `docs/audit_review_board_2026-07.md` for the full institutional audit.
 - [x] A4 buffered WS writer (queue + batch flush off the read loop).
 - [x] A5 sha256 of all configs embedded in every artifact manifest.
 - [x] A6 push alert on overall_ok flip (Telegram text via report run).
-- [ ] M3 correlation prune / permutation importance · M5 rolling recalibration cadence
-      (deferred: needs real-data volume to be meaningful).
+- [x] M3 permutation importance + correlation pruning — measured out-of-sample
+      each retrain (`logs/feature_importance.json`, shown on the Модель tab), so
+      "which of the 21 features actually work" is answered with numbers rather
+      than guessed at before spending on new inputs.
+- [x] M5 rolling recalibration — calibration is checked against the freshest
+      confirmed outcomes every `pipeline.recal_min` (default 20 min) and refit
+      when ECE/bias drift past threshold. Calibration maps scores to an event
+      frequency, and that frequency moved 10%->22% (pump) and 7%->28% (dump) in
+      two weeks, so it goes stale long before the model does; refitting is two
+      coefficients and needs no retrain.
 
 ### Sprint 3 — market realism & scale
 - [~] T3 order-flow: taker aggressor imbalance / CVD from WS `publicTrade`

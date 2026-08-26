@@ -103,6 +103,34 @@ def run_training(
         if key in ev:
             emit_metrics(logs_root, f"model_{key}", ev[key], {"model_run_id": tr["run_id"]})
 
+    # Feature importance on the out-of-sample segment: measured where the model
+    # is not recalling training rows, so a feature that scores zero here really
+    # is unused (audit M3).
+    try:
+        from amber.models.dataset_io import order_with_pseudo_time, split_rows
+        from amber.models.importance import correlated_pairs, permutation_importance
+        from amber.models.infer import load_latest_model
+
+        ds_rows, _ = load_latest_dataset_rows(datasets_root)
+        ordered, pts, _mode = order_with_pseudo_time(ds_rows)
+        trained = load_latest_model(models_root)
+        oos = split_rows(ordered, pts, trained["splits"])["test"] if trained.get("splits") else ordered
+        if oos:
+            imp = permutation_importance(trained, oos, target="pump", label_key="up_hit")
+            imp["correlated_pairs"] = correlated_pairs(oos[:5000])
+            (logs_root).mkdir(parents=True, exist_ok=True)
+            (logs_root / "feature_importance.json").write_text(
+                __import__("json").dumps(imp, ensure_ascii=False), encoding="utf-8"
+            )
+            if imp.get("status") == "ok":
+                logger.info(
+                    "feature importance: %s/%s carrying signal, top5 share %.0f%%, useless=%s",
+                    imp["carrying_count"], len(imp["scores"]), imp["top5_share_pct"],
+                    ",".join(imp["useless_features"]) or "none",
+                )
+    except Exception as exc:
+        logger.warning("feature importance failed: %s", exc)
+
     # Publish the promotion-gate backtest here, where a full dataset load is
     # expected, so the dashboard can render it without recomputing per page view.
     try:

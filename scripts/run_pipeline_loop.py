@@ -120,6 +120,30 @@ def _tune(config: dict) -> None:
         logger.info("threshold sweep verdict=%s", result.get("verdict"))
 
 
+def _recalibrate(config: dict) -> None:
+    """Refit calibration between retrains when it has drifted off the current
+    market regime — far cheaper than a retrain, and the thing that goes stale
+    first when event frequency moves (audit M5)."""
+    from amber.models.recalibrate import check_and_recalibrate, save_health
+
+    storage = config["storage"]
+    res = check_and_recalibrate(Path(storage["models_dir"]), Path(storage["datasets_dir"]))
+    save_health(Path(storage["logs_dir"]), res)
+    if res.get("status") != "ok":
+        return
+    if res.get("refit"):
+        for target, rep in res.get("heads", {}).items():
+            if rep.get("refit"):
+                logger.info(
+                    "recalibrated %s: ECE %.4f -> %.4f, bias %+.4f -> %+.4f",
+                    target, rep["before"]["ece"], rep["after"]["ece"],
+                    rep["before"]["bias"], rep["after"]["bias"],
+                )
+    else:
+        worst = max((r["before"]["ece"] for r in res.get("heads", {}).values()), default=0.0)
+        logger.info("calibration still healthy (worst ECE %.4f)", worst)
+
+
 def main() -> None:
     cfg = ConfigLoader(Path.cwd()).load_yaml("config/amber.yaml")
     setup_logging(cfg.get("run", {}).get("log_level", "INFO"))
@@ -152,6 +176,8 @@ def main() -> None:
 
     tune_min = int(pipeline_cfg.get("tune_min", 1440))
     last_tune = 0.0
+    recal_min = int(pipeline_cfg.get("recal_min", 20))
+    last_recal = 0.0
 
     while True:
         _retention_sweep(cfg)
@@ -171,6 +197,13 @@ def main() -> None:
             except Exception as exc:
                 logger.error("auto-retrain failed: %s", exc)
             last_retrain = now
+
+        if recal_min > 0 and (now - last_recal) >= recal_min * 60:
+            try:
+                _recalibrate(cfg)
+            except Exception as exc:
+                logger.info("recalibration skipped: %s", exc)
+            last_recal = now
 
         # Threshold sweep: computed on a schedule so the operating point can be
         # reviewed without an SSH session. It only ever *reports* — adopting
