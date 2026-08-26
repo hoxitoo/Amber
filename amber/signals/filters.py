@@ -70,12 +70,21 @@ def spread_bps(signal: SignalV1) -> float:
 
 
 class SignalGate:
-    """Per-symbol cooldown plus a cap on concurrently active symbols.
+    """One signal per candle, plus a per-symbol cooldown and a concurrency cap.
 
     A symbol's slot expires after `slot_ttl_sec` (roughly the signal horizon),
     so the concurrency cap limits *active* signals instead of permanently
     blocking every new symbol after the first N. With a `store`, state survives
     across scanner invocations.
+
+    The candle check matters as much as the cooldown. The scanner rescores the
+    newest feature row on every pass, so whenever that row has not advanced —
+    the scan interval is shorter than the cooldown, or the pipeline has not
+    written a new candle yet — the same candle would emit again once the
+    cooldown lapsed. That duplicated live signals (the same symbol, the same
+    event_ts, the same probabilities, several times over) and, worse, fed the
+    same outcome into the confirmed-outcome statistics repeatedly, inflating the
+    signal count and distorting rolling AUC.
     """
 
     def __init__(
@@ -93,24 +102,58 @@ class SignalGate:
         self.store = store
         self.state_key = state_key
         self.last_emit_ts: dict[str, float] = {}
+        self.last_event_ts: dict[str, float] = {}
         if store is not None:
             try:
-                self.last_emit_ts = {k: float(v) for k, v in store.get(state_key).items()}
+                stored = store.get(state_key)
+                # Older state was a flat {symbol: emit_time} mapping.
+                if isinstance(stored.get("emit"), dict) or isinstance(stored.get("event"), dict):
+                    self.last_emit_ts = {k: float(v) for k, v in stored.get("emit", {}).items()}
+                    self.last_event_ts = {k: float(v) for k, v in stored.get("event", {}).items()}
+                else:
+                    self.last_emit_ts = {k: float(v) for k, v in stored.items()}
             except Exception:
                 logger.warning("could not load signal gate state key=%s; starting fresh", state_key)
 
+    @staticmethod
+    def _event_seconds(signal: SignalV1) -> float | None:
+        raw = getattr(signal, "event_ts", None)
+        if raw is None:
+            return None
+        try:
+            return float(raw.timestamp()) if hasattr(raw, "timestamp") else float(raw)
+        except (TypeError, ValueError, OSError):
+            return None
+
+    def _persist(self) -> None:
+        if self.store is not None:
+            self.store.set(self.state_key, {"emit": self.last_emit_ts, "event": self.last_event_ts})
+
     def allow(self, signal: SignalV1) -> bool:
         now = time()
+
+        # One signal per candle: a rescored but unchanged feature row must not
+        # emit again just because the cooldown lapsed.
+        event_sec = self._event_seconds(signal)
+        if event_sec is not None:
+            seen = self.last_event_ts.get(signal.symbol)
+            if seen is not None and event_sec <= seen:
+                return False
+
         active = {s: t for s, t in self.last_emit_ts.items() if (now - t) < self.slot_ttl_sec}
         if len(active) >= self.concurrent_limit and signal.symbol not in active:
             return False
         last = self.last_emit_ts.get(signal.symbol)
         if last is not None and (now - last) < self.cooldown_sec:
             return False
+
         active[signal.symbol] = now
         self.last_emit_ts = active
-        if self.store is not None:
-            self.store.set(self.state_key, self.last_emit_ts)
+        if event_sec is not None:
+            # Keep only symbols still tracked, so this cannot grow without bound.
+            self.last_event_ts = {s: t for s, t in self.last_event_ts.items() if s in active}
+            self.last_event_ts[signal.symbol] = event_sec
+        self._persist()
         return True
 
 
