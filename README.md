@@ -34,10 +34,41 @@ python scripts/run_tests.py
 ## Monitoring
 ```bash
 python scripts/health_check.py    # data/model freshness
-python scripts/drift_check.py     # per-feature PSI vs train reference
+python scripts/drift_check.py     # per-symbol regime drift (symbol vs its own past)
 python scripts/quality_check.py   # confirmed-outcome AUC, bias, PSI
 python scripts/report.py          # overall_ok gate for dashboards/uptime checks
 ```
+
+Two PSI numbers exist and answer different questions. `quality_check.py` (and
+the dashboard's model tab) pools the whole universe against the model's
+`train_reference`: *has the world moved away from what the model was trained
+on?* `drift_check.py` (and the data tab) compares each symbol against its own
+earlier window: *has this coin changed regime?* Scoring one symbol against the
+pooled reference is a category error — a quiet coin occupies one decile of the
+universe-wide grid and pins PSI at ~12.4 forever.
+
+## Choosing the target (label sweep)
+```bash
+python scripts/run_label_sweep.py                       # 24 arms, ~1% budget
+python scripts/run_label_sweep.py --horizons 15,30,60,120
+```
+Sweeps horizon x barrier ruler x label shape and reports precision at a **fixed
+alert budget**, measured both on the scoring bar and with the one-bar delay a
+human actually acts under. Read-only: it trains each arm in memory and writes
+only `logs/label_sweep.json`, so it is safe to run against a live box.
+
+The column that decides things is `lift1_lo` — the lift still supported after
+comparing every arm (family-wise 95%), at the lag a human actually acts under.
+`lift1_lo <= 1.00` means the arm is indistinguishable from firing at random.
+Never rank on `lift1`: on a pure random walk with no edge at all, the point
+estimate put a top arm at 1.78.
+
+`lift0` high with `lift1` near 1.0 means the edge does not survive the minute
+between the alert and the trade, which no barrier setting can fix. `floored%`
+guards the comparison: when `threshold_floor` sets the barrier instead of the
+ruler, a "volatility-scaled" arm is really a fixed one and the ruler axis is
+measuring nothing. A run that warns `underpowered` fired too few alerts per arm
+for any of it to mean something — raise `--budget` or `--max-candles`.
 
 ## Dashboard (UI)
 A Streamlit dashboard shows system status, live signals, model quality,
