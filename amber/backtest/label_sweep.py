@@ -6,17 +6,21 @@ edge survive the delay between the signal and acting on it".
 
 Two findings drove the design:
 
-- Precision at the operating point measured 36.8% on the scoring bar (lift x1.80
-  over a 20.4% base rate) but ~18.8% once entry was delayed by one bar — roughly
-  the base rate. If the edge dies inside a minute, no barrier setting rescues it,
-  so `entry_lag_bars` is a first-class axis here rather than a fixed assumption.
+- Entry lag is a first-class axis because the edge was believed to die within a
+  bar: eval precision read 36.8% against a backtest 18.8%. The sweep measured it
+  properly and REFUTED that — lift0 and lift1 come out within a few percent of
+  each other on every arm. The two original numbers were never comparable (the
+  backtest pools pump and dump, whose base rates differ, and applies concurrency
+  gating). The axis stays because it is what settled the question.
 
 - `range_atr_14` carries ~32% of permutation importance, i.e. the model largely
-  forecasts volatility. The production barrier is `k * sigma_fast * sqrt(h)`
-  scaled by the *same* fast volatility, so a correctly detected volatility spike
-  widens the target proportionally and cancels itself. The `slow_vol` ruler keeps
-  cross-symbol comparability (a fixed barrier means something different on BTC
-  than on a small cap) while removing that coupling.
+  forecasts volatility. The production barrier was `k * sigma_fast * sqrt(h)`
+  scaled by the *same* fast volatility. Measured: at h=15 that fell below
+  `threshold_floor` for 82% of rows, so it was a fixed 0.5% barrier nearly
+  everywhere, and the 18% where it did scale were the high-volatility rows —
+  exactly where the model fires. Adaptive precisely where it cancelled the
+  model's strongest feature. The live config moved to a fixed 1.0% barrier on
+  the strength of this sweep; `fast_vol` remains here as the arm to beat.
 
 Nothing here writes datasets or models. Arms are trained in memory and the
 result is a JSON report, so the sweep can run against a live box without
@@ -32,7 +36,7 @@ import math
 from pathlib import Path
 from typing import Any, Sequence
 
-from amber.labeling.events import label_event_path
+from amber.labeling.events import label_path
 from amber.models.features import MODEL_FEATURES
 from amber.models.split import make_holdout_splits
 
@@ -73,24 +77,15 @@ def _rolling_vol(values: Sequence[float], end_idx: int, window: int) -> float:
     return math.sqrt(max(0.0, var))
 
 
-def label_one_sided(prices: Sequence[float], up_pct: float, down_pct: float) -> dict[str, int]:
-    """Did price reach +up_pct / -down_pct at any point in the window.
+def label_one_sided(prices: Sequence[float], up_pct: float, down_pct: float) -> dict[str, int | None]:
+    """Kept as a named entry point; the implementation lives in `labeling.events`.
 
-    The production label is a triple barrier, which encodes a stop-loss: a run
-    that dips first and then rallies counts as a loss. That matches a mechanical
-    trade, but Amber's output is an alert claiming "a pump is coming", and this
-    is the label that claim actually corresponds to. It is also what
-    `quality_report._confirmed_outcome` already uses to score live signals, so
-    the offline and online definitions agree under this shape.
+    A second copy of the labelling rule here would be the same mistake the sweep
+    and the backtester already made once with the trading rules, where the two
+    drifted apart and produced PF 0.55 against PF 1.06 on identical data. What
+    the sweep selects has to be exactly what `build_dataset` then produces.
     """
-    if len(prices) < 2:
-        return {"up_hit": 0, "down_hit": 0}
-    p0 = prices[0]
-    up_level = p0 * (1.0 + up_pct)
-    down_level = p0 * (1.0 - down_pct)
-    up = any(p >= up_level for p in prices[1:])
-    down = any(p <= down_level for p in prices[1:])
-    return {"up_hit": int(up), "down_hit": int(down)}
+    return label_path(prices, up_pct=up_pct, down_pct=down_pct, shape="one_sided")
 
 
 def load_series(
@@ -185,7 +180,6 @@ def build_arm_rows(
 ) -> list[dict[str, Any]]:
     """Label every clean row under one arm. Censored rows are dropped, not
     labelled negative, which would bias the base rate downward."""
-    labeller = label_one_sided if shape == "one_sided" else label_event_path
     out: list[dict[str, Any]] = []
     for symbol, series in series_by_symbol.items():
         prices = series.prices
@@ -194,7 +188,7 @@ def build_arm_rows(
             if i + horizon >= n:
                 continue
             half, clamp = _barrier(series, i, horizon, ruler, k, floor, cap)
-            labels = labeller(prices[i : i + horizon + 1], up_pct=half, down_pct=half)
+            labels = label_path(prices[i : i + horizon + 1], up_pct=half, down_pct=half, shape=shape)
             src = series.rows[i]
             row = {name: src.get(name, 0.0) for name in MODEL_FEATURES}
             row.update(

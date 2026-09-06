@@ -86,20 +86,46 @@ labeling:
   # is time to reach it. Simulated at 27-symbol volatility: 30 bars resolves ~72%
   # with break-even 56.1%, 60 bars resolves ~75% with break-even 54.3%.
   horizon_steps: 15
-  horizon_steps_list: [15, 30, 60]
-  up_pct: 0.002
-  down_pct: 0.002
-  adaptive_thresholds: true
-  # With scale_threshold_by_horizon the barrier is k * sigma * sqrt(horizon), so
-  # k reads as "standard deviations of the h-bar move" and every horizon asks an
-  # equally hard question. Previously one absolute barrier was applied to all
-  # horizons, which made the same 0.42% a stretch over 5 bars and easy over 20
-  # while the rows were pooled into a single dataset.
+  # 60 dropped: the label sweep cannot compare horizons on a 48h window (see
+  # below), but at h=60 it had only 4 independent episodes in the test segment,
+  # so those rows were costing a third of the build for no measurable return.
+  horizon_steps_list: [15, 30]
+  # Fixed 1.0% barrier, chosen by scripts/run_label_sweep.py on 2026-09-06.
+  #
+  # The sweep ranked 24 label definitions by lift over base rate at the lag a
+  # human acts under, with a family-wise correction and alerts collapsed into
+  # market episodes. Within BOTH h=15 and h=30 the ordering was identical, 8 of
+  # 8 (Spearman 0.976): fixed_100 > fixed_070 > slow_vol > fast_vol. The former
+  # adaptive setting was the WORST of all 24 arms, at lift 0.21-0.39 — below 1.0,
+  # i.e. its alerts were indistinguishable from firing at random.
+  #
+  # Why the adaptive barrier failed: at 1m crypto volatility `k*sigma*sqrt(h)`
+  # fell below threshold_floor for 82% of rows at h=15, so the barrier was
+  # already fixed at 0.5% almost everywhere. The 18% where it did scale were the
+  # high-volatility rows — exactly where the model fires — so it widened the
+  # target precisely where range_atr_14 (32% of permutation importance) would
+  # otherwise have paid off. Adaptive where it hurt, fixed where it did not
+  # matter. See docs/target_review_2026-09.md.
+  up_pct: 0.010
+  down_pct: 0.010
+  adaptive_thresholds: false
+  # "Did price rise 1% at any point within the horizon", not "did it rise 1%
+  # before falling 1%". The triple barrier encodes a stop-loss, which is what a
+  # mechanical trade experiences; Amber emits alerts and executes no orders, so
+  # the claim it makes is the one-sided one. It beat two_sided in all 6
+  # measurable matched pairs. Backtest PnL still uses first_hit, so trade
+  # accounting keeps its stop-loss semantics regardless of this setting.
+  label_shape: one_sided
+  # --- INERT while adaptive_thresholds is false -----------------------------
+  # Kept so `--rulers slow_vol,fast_vol` in the label sweep still reproduces the
+  # old barriers, and so re-enabling adaptive mode does not need these values
+  # rediscovered. They have NO effect on the live dataset as configured above.
+  # Note threshold_floor is what quietly made the "adaptive" barrier fixed for
+  # 82% of rows; if adaptive mode is ever revisited, that is the first thing to
+  # re-derive, not threshold_k.
   scale_threshold_by_horizon: true
   threshold_k: 0.8
   threshold_vol_window: 60
-  # Floor kept above ~0.56%: below that the round-trip cost alone pushes the
-  # break-even win rate past 58%, i.e. the label is unprofitable by construction.
   threshold_floor: 0.005
   threshold_cap: 0.05
   # drop warm-up rows whose long-lookback features are still degenerate

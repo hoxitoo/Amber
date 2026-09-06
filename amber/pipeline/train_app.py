@@ -103,6 +103,19 @@ def run_training(
         if key in ev:
             emit_metrics(logs_root, f"model_{key}", ev[key], {"model_run_id": tr["run_id"]})
 
+    # A model that fires on nothing is indistinguishable, on every dashboard
+    # panel, from a model with no skill: precision reads 0.000 and the backtest
+    # reads 0 trades. That pairing has twice been a threshold fault rather than
+    # a modelling one (audit B3, B6), so name it at the moment it is detectable.
+    fired = float(ev.get("n_predicted_up", 0.0)) + float(ev.get("n_predicted_down", 0.0))
+    if fired <= 0:
+        logger.warning(
+            "model fires on 0 of %s eval rows at thresholds up=%.4f down=%.4f (base rates %.4f/%.4f) — "
+            "the operating point is unreachable, not the model necessarily weak; check config/thresholds.yaml",
+            int(ev.get("rows", 0)), ev.get("threshold_up", 0.0), ev.get("threshold_down", 0.0),
+            ev.get("base_rate_up", 0.0), ev.get("base_rate_down", 0.0),
+        )
+
     # Feature importance on the out-of-sample segment: measured where the model
     # is not recalling training rows, so a feature that scores zero here really
     # is unused (audit M3).

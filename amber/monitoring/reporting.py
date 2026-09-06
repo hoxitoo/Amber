@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import logging
 import math
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,8 @@ from typing import Any
 from amber.backtest.backtester import event_backtest
 from amber.monitoring.health import check_health
 from amber.monitoring.quality_report import build_quality_report
+
+logger = logging.getLogger(__name__)
 
 
 
@@ -62,9 +65,16 @@ def _load_thresholds(storage: dict[str, str]) -> dict[str, Any]:
 
     Returns the `thresholds` mapping (or {} if not found) so the report backtest
     replays through the same operating thresholds the live scanner uses.
+
+    Every empty return is logged. Callers fall back to an absolute cut that a
+    calibrated rare-event head cannot reach, so a silent {} here shows up only
+    as `precision 0.000` and `0 trades` on a dashboard — which is exactly how
+    audit finding B6 stayed live for days before anyone read it as a fault
+    rather than as the model being bad.
     """
     anchor = storage.get("raw_dir") or storage.get("logs_dir") or storage.get("models_dir")
     if not anchor:
+        logger.warning("no storage anchor to locate config/thresholds.yaml; using absolute fallback cut")
         return {}
     here = Path(anchor).resolve()
     for parent in [here, *here.parents]:
@@ -74,10 +84,15 @@ def _load_thresholds(storage: dict[str, str]) -> dict[str, Any]:
                 import yaml
 
                 data = yaml.safe_load(cand.read_text(encoding="utf-8")) or {}
-            except Exception:
+            except Exception as exc:
+                logger.warning("config/thresholds.yaml at %s is unreadable: %s", cand, exc)
                 return {}
             thr = data.get("thresholds", {})
-            return thr if isinstance(thr, dict) else {}
+            if isinstance(thr, dict) and thr:
+                return thr
+            logger.warning("config/thresholds.yaml at %s has no usable `thresholds` mapping", cand)
+            return {}
+    logger.warning("config/thresholds.yaml not found above %s; using absolute fallback cut", here)
     return {}
 
 

@@ -158,3 +158,43 @@ horizon 82% of rows have their barrier set by `threshold_floor` (0.5%) rather
 than by volatility. The remaining 18% are the high-volatility rows — exactly
 the ones the model fires on. So the barrier is fixed everywhere it does not
 matter and adaptive precisely where it cancels the model's strongest feature.
+
+### The lag hypothesis was wrong
+
+The sweep was built partly to test whether the edge survives the bar between
+the alert and acting on it, after eval precision (36.8%) and backtest precision
+(18.8%) suggested it did not. **It does.** `lift0` and `lift1` land within a few
+percent of each other on every one of the 24 arms. The two original numbers were
+never comparable: the backtest pools pump and dump, whose base rates differ, and
+applies concurrency gating. Lag is not the problem and never was; the target
+definition is.
+
+### Adopted
+
+| parameter | before | after |
+|---|---|---|
+| barrier | `k·σ_fast·√h`, floored 82% of the time | fixed 1.0% |
+| label shape | two-sided (triple barrier) | one-sided |
+| horizons | 15, 30, 60 | 15, 30 |
+
+The horizon was *not* chosen by the sweep and cannot be: episodes are grouped by
+one horizon, so a 7-hour test segment admits at most 29 independent episodes at
+h=15 but only 7 at h=60. Observed counts (18 and 4) sit near those ceilings, so
+long horizons rank low for want of measurable observations rather than for want
+of skill. Ruler and shape comparisons *within* a horizon are unaffected, and
+those are what was adopted. Re-run the sweep with a longer `--max-candles` once
+more history exists to settle the horizon.
+
+Two structural consequences of the change:
+
+- **Trade accounting had to be separated from the training target.** Under
+  one-sided labels `up_hit` and `down_hit` are both 1 for any path that touched
+  both levels, which the triple barrier could never produce. Any `if up_hit ...
+  elif down_hit` chain then books a dip-then-rally as a clean win. PnL now reads
+  `first_hit`, which keeps first-touch semantics under both shapes, so the
+  backtest still models a stop-loss while the model learns the alert-shaped
+  target.
+- **Offline and online definitions finally agree.** `quality_report`'s
+  `_confirmed_outcome` has always scored live signals one-sided (did the high
+  reach the target), while the model was trained two-sided. Rolling AUC was
+  therefore measuring a different question from CV AUC. They now match.

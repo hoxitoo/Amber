@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from amber.common.manifest import ArtifactManifest, new_run_id, write_manifest
-from amber.labeling.events import label_event_path
+from amber.labeling.events import LABEL_SHAPES, label_path
 from amber.models.features import MODEL_FEATURES
 
 
@@ -113,6 +113,7 @@ def build_dataset_from_config(config: dict[str, Any]) -> dict[str, int]:
         min_warmup_bars=int(labeling.get("min_warmup_bars", 60)),
         max_candles_per_symbol=int(labeling.get("max_candles_per_symbol", 0)),
         scale_threshold_by_horizon=bool(labeling.get("scale_threshold_by_horizon", True)),
+        label_shape=str(labeling.get("label_shape", "two_sided")),
     )
 
 
@@ -132,8 +133,11 @@ def build_dataset(
     min_warmup_bars: int = 0,
     max_candles_per_symbol: int = 0,
     scale_threshold_by_horizon: bool = True,
+    label_shape: str = "two_sided",
 ) -> dict[str, int]:
     horizons = _validate_horizons(horizon_steps=horizon_steps, horizon_steps_list=horizon_steps_list)
+    if label_shape not in LABEL_SHAPES:
+        raise ValueError(f"label_shape must be one of {LABEL_SHAPES}, got {label_shape!r}")
 
     if not math.isfinite(up_pct) or not math.isfinite(down_pct):
         raise ValueError("up_pct and down_pct must be finite numbers")
@@ -214,7 +218,7 @@ def build_dataset(
                     row_down = thr
 
                 future = prices[i : i + horizon + 1]
-                labels = label_event_path(future, up_pct=row_up, down_pct=row_down)
+                labels = label_path(future, up_pct=row_up, down_pct=row_down, shape=label_shape)
                 out_row = {name: rows[i].get(name, 0.0) for name in MODEL_FEATURES}
                 out_row.update(
                     {
@@ -259,6 +263,7 @@ def build_dataset(
             "threshold_floor": threshold_floor,
             "threshold_cap": threshold_cap,
             "scale_threshold_by_horizon": scale_threshold_by_horizon,
+            "label_shape": label_shape,
         },
     )
     write_manifest(dataset_dir / "manifest.json", manifest)

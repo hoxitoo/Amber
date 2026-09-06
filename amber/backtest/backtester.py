@@ -54,19 +54,36 @@ def _aggregate(pnls: list[float], counts: dict[str, int], extra: dict[str, Any])
     }
 
 
+def _first_touch(row: dict[str, Any]) -> int:
+    """Which barrier a trade would have reached first: 1 up, -1 down, 0 neither.
+
+    PnL depends on what happened FIRST, which is not recoverable from the
+    up_hit/down_hit pair once labels are one-sided: there both flags are 1 for
+    any path that touched both levels, so `if up_hit ... elif down_hit` books a
+    dip-then-rally as a clean win and an `up and not down` test books it as a
+    timeout. `first_hit` carries first-touch semantics under every label shape.
+
+    Older datasets always wrote `first_hit` too, so the fallback below only
+    covers a row missing it entirely, where the flags are necessarily exclusive.
+    """
+    if "first_hit" in row:
+        return int(row.get("first_hit") or 0)
+    up, down = int(row.get("up_hit", 0)), int(row.get("down_hit", 0))
+    return 1 if up == 1 and down == 0 else -1 if down == 1 and up == 0 else 0
+
+
 def _label_replay(rows: list[dict[str, Any]], cost: float) -> tuple[list[float], dict[str, int]]:
     """Legacy mode: book the labeled outcome of every event row (base-rate view,
     no model involved)."""
     pnls: list[float] = []
     counts = {"TP": 0, "SL": 0, "Timeout": 0}
     for r in rows:
-        up = int(r.get("up_hit", 0))
-        down = int(r.get("down_hit", 0))
+        first = _first_touch(r)
         target = float(r.get("up_pct", 0.002))
-        if up == 1 and down == 0:
+        if first == 1:
             pnl = target - cost
             counts["TP"] += 1
-        elif down == 1 and up == 0:
+        elif first == -1:
             pnl = -target - cost
             counts["SL"] += 1
         else:
@@ -112,16 +129,15 @@ def replay_with_probs(
         if symbol in pending:
             # Entry at this bar; the outcome is this row's forward window.
             direction = pending.pop(symbol)
-            up = int(r.get("up_hit", 0))
-            down = int(r.get("down_hit", 0))
+            first = _first_touch(r)
             target_up = float(r.get("up_pct", 0.002))
             target_down = float(r.get("down_pct", 0.002))
-            hit, miss = (up, down) if direction == "pump" else (down, up)
+            want = 1 if direction == "pump" else -1
             gain, loss = (target_up, target_down) if direction == "pump" else (target_down, target_up)
-            if hit == 1:
+            if first == want:
                 pnl = gain - cost
                 counts["TP"] += 1
-            elif miss == 1:
+            elif first == -want:
                 pnl = -loss - cost
                 counts["SL"] += 1
             else:
