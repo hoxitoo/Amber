@@ -16,6 +16,7 @@ from amber.backtest.label_sweep import (
     DEFAULT_BUDGET,
     RULERS,
     SHAPES,
+    _episodes,
     _lagged,
     _precision_at_budget,
     build_arm_rows,
@@ -133,15 +134,16 @@ class TestRulers(unittest.TestCase):
 
 class TestLagPairing(unittest.TestCase):
     def test_lag_pairs_the_score_with_the_next_bars_label(self):
+        base = 1_700_000_000_000
         rows = [
-            {"symbol": "A", "_i": 0, "up_hit": 0},
-            {"symbol": "A", "_i": 1, "up_hit": 1},
-            {"symbol": "A", "_i": 2, "up_hit": 0},
+            {"symbol": "A", "_i": 0, "up_hit": 0, "ts": base},
+            {"symbol": "A", "_i": 1, "up_hit": 1, "ts": base + 60_000},
+            {"symbol": "A", "_i": 2, "up_hit": 0, "ts": base + 120_000},
         ]
         scores = [0.9, 0.8, 0.7]
 
-        s0, y0 = _lagged(rows, scores, 0, "up_hit")
-        s1, y1 = _lagged(rows, scores, 1, "up_hit")
+        s0, y0, _ = _lagged(rows, scores, 0, "up_hit")
+        s1, y1, _ = _lagged(rows, scores, 1, "up_hit")
 
         self.assertEqual((s0, y0), ([0.9, 0.8, 0.7], [0, 1, 0]))
         # last row has no successor in this segment -> dropped, not guessed
@@ -149,10 +151,10 @@ class TestLagPairing(unittest.TestCase):
 
     def test_lag_does_not_cross_symbols(self):
         rows = [
-            {"symbol": "A", "_i": 5, "up_hit": 0},
-            {"symbol": "B", "_i": 6, "up_hit": 1},
+            {"symbol": "A", "_i": 5, "up_hit": 0, "ts": 1_700_000_000_000},
+            {"symbol": "B", "_i": 6, "up_hit": 1, "ts": 1_700_000_060_000},
         ]
-        s1, y1 = _lagged(rows, [0.9, 0.1], 1, "up_hit")
+        s1, y1, _ = _lagged(rows, [0.9, 0.1], 1, "up_hit")
         self.assertEqual((s1, y1), ([], []))
 
 
@@ -160,7 +162,7 @@ class TestPrecisionAtBudget(unittest.TestCase):
     def test_precision_is_measured_on_the_top_scored_rows(self):
         scores = [0.1, 0.9, 0.2, 0.8, 0.3]
         labels = [0, 1, 0, 1, 0]
-        res = _precision_at_budget(scores, labels, budget=0.4)
+        res = _precision_at_budget(scores, labels, [0] * len(scores), budget=0.4)
 
         self.assertEqual(res["alerts"], 2)
         self.assertEqual(res["precision"], 1.0)
@@ -170,8 +172,57 @@ class TestPrecisionAtBudget(unittest.TestCase):
     def test_a_useless_score_lands_at_lift_one(self):
         labels = [1 if i % 4 == 0 else 0 for i in range(400)]
         scores = [0.5] * 400  # no ordering information at all
-        res = _precision_at_budget(scores, labels, budget=0.1)
+        res = _precision_at_budget(scores, labels, [i * 60_000 * 60 for i in range(400)], budget=0.1)
         self.assertAlmostEqual(res["lift"], 1.0, delta=0.35)
+
+
+class TestEpisodeClustering(unittest.TestCase):
+    """Alerts are not independent observations, and the interval must know it."""
+
+    def test_simultaneous_alerts_across_symbols_are_one_episode(self):
+        # a market-wide lurch: 40 alerts, same minute, 40 different coins
+        ts = [1_700_000_000_000] * 40
+        self.assertEqual(_episodes(ts, horizon=15), 1)
+
+    def test_alerts_inside_one_horizon_are_one_episode(self):
+        base = 1_700_000_000_000
+        ts = [base + i * 60_000 for i in range(10)]  # 10 consecutive minutes
+        self.assertEqual(_episodes(ts, horizon=15), 1)
+
+    def test_well_separated_alerts_count_separately(self):
+        base = 1_700_000_000_000
+        ts = [base + i * 60_000 * 60 for i in range(5)]  # an hour apart
+        self.assertEqual(_episodes(ts, horizon=15), 5)
+
+    def test_clustered_bound_is_weaker_than_the_naive_one(self):
+        """The whole point: 100 alerts from one lurch are not 100 observations."""
+        base_ts = 1_700_000_000_000
+        scores = [1.0] * 100 + [0.0] * 900
+        labels = [1] * 80 + [0] * 20 + [0] * 900
+        # every alert lands in the same minute -> one episode
+        timestamps = [base_ts] * 100 + [base_ts + i * 60_000 for i in range(900)]
+
+        res = _precision_at_budget(scores, labels, timestamps, budget=0.1, horizon=15)
+
+        self.assertEqual(res["episodes"], 1)
+        self.assertAlmostEqual(res["precision"], 0.8)
+        self.assertLess(
+            res["lift_ci_low_clustered"],
+            res["lift_ci_low"],
+            "clustering did not weaken the bound",
+        )
+
+    def test_spread_out_alerts_keep_their_evidence(self):
+        """The correction must not punish genuinely independent alerts."""
+        base_ts = 1_700_000_000_000
+        scores = [1.0] * 100 + [0.0] * 900
+        labels = [1] * 80 + [0] * 20 + [0] * 900
+        timestamps = [base_ts + i * 60_000 * 60 for i in range(1000)]  # hours apart
+
+        res = _precision_at_budget(scores, labels, timestamps, budget=0.1, horizon=15)
+
+        self.assertEqual(res["episodes"], 100)
+        self.assertAlmostEqual(res["lift_ci_low_clustered"], res["lift_ci_low"], places=6)
 
 
 class TestSweepEndToEnd(unittest.TestCase):

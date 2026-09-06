@@ -248,8 +248,43 @@ def _wilson_low(hits: int, n: int, z: float = 1.96) -> float:
     return max(0.0, (centre - margin) / d)
 
 
+def _episodes(timestamps: list[int], horizon: int, step_ms: int = 60_000) -> int:
+    """Independent market episodes among a set of alerts.
+
+    Alerts are not independent observations, in two ways that both inflate the
+    apparent sample size:
+
+    - Overlap. Two alerts a few bars apart look forward at overlapping windows,
+      so their outcomes are largely the same event seen twice.
+    - Cross-section. Crypto moves together. When the market lurches, the model
+      fires across many symbols at once and every one of those alerts is the
+      same underlying event.
+
+    Grouping purely by time handles both: alerts within one horizon of each
+    other, on any symbol, count once. This is the effective sample size the
+    interval should use, and it can be an order of magnitude below the alert
+    count.
+    """
+    if not timestamps:
+        return 0
+    ordered = sorted(timestamps)
+    span = max(1, horizon) * step_ms
+    count = 1
+    anchor = ordered[0]
+    for ts in ordered[1:]:
+        if ts - anchor > span:
+            count += 1
+            anchor = ts
+    return count
+
+
 def _precision_at_budget(
-    scores: list[float], labels: list[int], budget: float, z: float = 1.96
+    scores: list[float],
+    labels: list[int],
+    timestamps: list[int],
+    budget: float,
+    z: float = 1.96,
+    horizon: int = 15,
 ) -> dict[str, Any]:
     """Precision over the highest-scoring `budget` fraction of rows.
 
@@ -265,6 +300,14 @@ def _precision_at_budget(
     base = sum(labels) / n
     precision = hits / take
     low = _wilson_low(hits, take, z)
+
+    # The same bound recomputed on episodes rather than alerts. This is the one
+    # the verdict uses: 117 alerts drawn from 5 market lurches carry about as
+    # much evidence as 5 observations, and the naive interval would be wrong by
+    # a factor of five.
+    eps = _episodes([timestamps[i] for i in order], horizon)
+    eps_hits = int(round(precision * eps))
+    low_clustered = _wilson_low(eps_hits, eps, z) if eps > 0 else 0.0
     return {
         "precision": precision,
         "precision_ci_low": low,
@@ -272,13 +315,17 @@ def _precision_at_budget(
         "lift": (precision / base) if base > 0 else None,
         # Lift the data supports at 95%, not the lift that happened to land.
         "lift_ci_low": (low / base) if base > 0 else None,
+        "episodes": eps,
+        "lift_ci_low_clustered": (low_clustered / base) if base > 0 else None,
         "alerts": take,
         "hits": hits,
         "rows": n,
     }
 
 
-def _lagged(rows: list[dict[str, Any]], scores: list[float], lag: int, label_key: str) -> tuple[list[float], list[int]]:
+def _lagged(
+    rows: list[dict[str, Any]], scores: list[float], lag: int, label_key: str
+) -> tuple[list[float], list[int], list[int]]:
     """Pair each row's score with the label `lag` bars later on the same symbol.
 
     lag=0 scores and grades the same bar. lag=1 is what a human acting on an
@@ -286,17 +333,19 @@ def _lagged(rows: list[dict[str, Any]], scores: list[float], lag: int, label_key
     outcome that matters starts from the next bar.
     """
     if lag <= 0:
-        return scores, [int(r[label_key]) for r in rows]
+        return scores, [int(r[label_key]) for r in rows], [int(r["ts"]) for r in rows]
     by_key = {(r["symbol"], r["_i"]): int(r[label_key]) for r in rows}
     out_s: list[float] = []
     out_y: list[int] = []
+    out_ts: list[int] = []
     for score, row in zip(scores, rows):
         target = by_key.get((row["symbol"], row["_i"] + lag))
         if target is None:
             continue  # no labelled row that far forward; dropping beats guessing
         out_s.append(score)
         out_y.append(target)
-    return out_s, out_y
+        out_ts.append(int(row["ts"]))
+    return out_s, out_y, out_ts
 
 
 def evaluate_arm(
@@ -306,11 +355,17 @@ def evaluate_arm(
     lags: Sequence[int] = (0, 1),
     train_frac: float = 0.7,
     calib_frac: float = 0.15,
-    gap: int = 30,
+    gap: int | None = None,
     target: str = "pump",
     z: float = 1.96,
+    horizon: int = 15,
 ) -> dict[str, Any]:
-    """Train on the train segment, report precision on calib and test."""
+    """Train on the train segment, report precision on calib and test.
+
+    The purge gap defaults to the horizon: a fixed 30 would let a 60-bar label
+    near the train boundary see 30 bars of the test segment.
+    """
+    gap = max(30, horizon) if gap is None else gap
     from amber.models.dataset_io import order_with_pseudo_time, split_rows
     from amber.models.train import _fit_dual, _predict_head
 
@@ -346,8 +401,8 @@ def evaluate_arm(
         raw = _predict_head(model, part, target=target)
         per_lag: dict[str, Any] = {}
         for lag in lags:
-            s, y = _lagged(part, raw, lag, label_key)
-            res = _precision_at_budget(s, y, budget, z)
+            s, y, ts = _lagged(part, raw, lag, label_key)
+            res = _precision_at_budget(s, y, ts, budget, z, horizon)
             # Alerts per day at this budget, so an arm's precision can be read
             # against how much attention it costs.
             frac = len(part) / len(ordered) if ordered else 0.0
@@ -391,7 +446,7 @@ def run_sweep(
                 rows = build_arm_rows(
                     series, horizon=horizon, ruler=ruler, shape=shape, k=k, floor=floor, cap=cap
                 )
-                res = evaluate_arm(rows, budget=budget, target=target, z=z)
+                res = evaluate_arm(rows, budget=budget, target=target, z=z, horizon=horizon)
                 res.update({"horizon": horizon, "ruler": ruler, "shape": shape})
                 # Average realised barrier: a ruler is only interpretable next to
                 # the move size it actually asks for. `floored_pct` says how
@@ -417,7 +472,8 @@ def run_sweep(
         return (a.get(segment) or {}).get("lag1") or {}
 
     def _test_lag1_lift_low(a: dict[str, Any]) -> float:
-        return _lag1(a, "test").get("lift_ci_low") or 0.0
+        # Clustered bound: alerts from one market lurch are one observation.
+        return _lag1(a, "test").get("lift_ci_low_clustered") or 0.0
 
     ranked = sorted(ok, key=_test_lag1_lift_low, reverse=True)
     best = ranked[0] if ranked else None
@@ -463,12 +519,14 @@ def format_table(report: dict[str, Any]) -> str:
         return f"sweep unavailable: {report.get('status')}"
     header = (
         f"{'h':>3} {'ruler':<10} {'shape':<10} {'barrier%':>8} {'floored%':>8} "
-        f"{'base':>6} {'P@lag0':>7} {'lift0':>6} {'P@lag1':>7} {'lift1':>6} {'lift1_lo':>8} {'alerts/d':>9}"
+        f"{'base':>6} {'P@lag0':>7} {'lift0':>6} {'P@lag1':>7} {'lift1':>6} {'lift1_lo':>8} "
+        f"{'episodes':>8} {'lift1_ep':>8} {'alerts/d':>9}"
     )
     lines = [header, "-" * len(header)]
     ok = [a for a in report["arms"] if a.get("status") == "ok"]
     for a in sorted(
-        ok, key=lambda x: -(((x.get("test") or {}).get("lag1") or {}).get("lift_ci_low") or 0.0)
+        ok,
+        key=lambda x: -(((x.get("test") or {}).get("lag1") or {}).get("lift_ci_low_clustered") or 0.0),
     ):
         t = a.get("test") or {}
         l0, l1 = t.get("lag0") or {}, t.get("lag1") or {}
@@ -483,6 +541,8 @@ def format_table(report: dict[str, Any]) -> str:
             f"{_f(l1.get('base_rate')):>6} {_f(l0.get('precision')):>7} {_f(l0.get('lift'), '{:.2f}'):>6} "
             f"{_f(l1.get('precision')):>7} {_f(l1.get('lift'), '{:.2f}'):>6} "
             f"{_f(l1.get('lift_ci_low'), '{:.2f}'):>8} "
+            f"{_f(l1.get('episodes'), '{:.0f}'):>8} "
+            f"{_f(l1.get('lift_ci_low_clustered'), '{:.2f}'):>8} "
             f"{_f(l1.get('alerts_per_day'), '{:.1f}'):>9}"
         )
     skipped = [a for a in report["arms"] if a.get("status") != "ok"]
@@ -493,9 +553,14 @@ def format_table(report: dict[str, Any]) -> str:
     lines.append("")
     lines.append(f"verdict: {report.get('verdict')}")
     lines.append(
-        f"ranked by lift1_lo: the lift supported after comparing {report.get('n_arms')} arms "
-        f"(family-wise 95%, z={report.get('family_z', 0.0):.2f}), not the one that landed. "
-        "lift1_lo <= 1.00 means the arm is indistinguishable from firing at random."
+        f"ranked by lift1_ep, not lift1: the lift supported after comparing {report.get('n_arms')} arms "
+        f"(family-wise 95%, z={report.get('family_z', 0.0):.2f}) AND after collapsing alerts that "
+        "belong to the same market episode into one observation."
+    )
+    lines.append(
+        "lift1_lo treats every alert as independent, which it is not: alerts within one horizon "
+        "of each other, on any symbol, are one event. Read lift1_ep. <= 1.00 means the arm is "
+        "indistinguishable from firing at random."
     )
     if report.get("underpowered"):
         lines.append(

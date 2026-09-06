@@ -123,3 +123,38 @@ Reference points from the validation run, for reading a real one against:
 | run | best `lift1` | best `lift1_lo` | verdict |
 |---|---|---|---|
 | 27-symbol random walk, no edge, 117 alerts/arm | 1.28 | 0.89 | `inconclusive` |
+
+### Alerts are not independent observations
+
+A third correction, added after the first live run. The interval above assumed
+117 independent alerts. They are not, in two ways that both inflate the
+apparent sample size:
+
+- **Overlap.** Alerts a few bars apart look forward at overlapping windows, so
+  their outcomes are largely the same event counted twice.
+- **Cross-section.** Crypto moves together. When the market lurches the model
+  fires across many symbols at once, and all of those alerts are one event.
+
+`lift1_ep` recomputes the bound over *episodes* — alerts within one horizon of
+each other, on any symbol, collapse into one observation — and the verdict uses
+it. `lift1_lo` is kept in the table only to show how much of the apparent
+evidence was double counting.
+
+The random-walk null did not catch this, and could not have: its 27 series were
+generated independently, so it had no cross-sectional correlation to expose.
+That is a known limit of that null, not a property of real data.
+
+## First live run — 6 September 2026
+
+| finding | evidence |
+|---|---|
+| The production barrier is already fixed, not adaptive | `floored%` = 82 at h=15, 69 at h=30, 52 at h=60 |
+| Fixed barriers beat volatility-scaled ones outright | all 11 top-ranked arms are `fixed_*` |
+| The production arm is near the bottom | h=30 `fast_vol two_sided` ranked last of 24 |
+| One-sided beats two-sided consistently | at equal h and ruler, in every pair |
+
+The floored share is the finding that needs no statistics: at the production
+horizon 82% of rows have their barrier set by `threshold_floor` (0.5%) rather
+than by volatility. The remaining 18% are the high-volatility rows — exactly
+the ones the model fires on. So the barrier is fixed everywhere it does not
+matter and adaptive precisely where it cancels the model's strongest feature.
