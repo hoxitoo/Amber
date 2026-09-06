@@ -67,6 +67,23 @@ alert budget**, measured both on the scoring bar and with the one-bar delay a
 human actually acts under. Read-only: it trains each arm in memory and writes
 only `logs/label_sweep.json`, so it is safe to run against a live box.
 
+## Where to set the alert threshold (operating curve)
+```bash
+python scripts/run_operating_curve.py
+```
+Sweeps the alert rate over the live model's out-of-sample segment and reports,
+for each rate, the calibrated probability cut, the **`prob_lift_min` to paste
+into `config/thresholds.yaml`**, and the precision it buys. Every number
+measured before this used a 1% budget — ~388 alerts/day across 27 symbols,
+which is a firehose rather than a tool.
+
+A rate is only recommended when its edge survives episode clustering *and*
+rests on at least `MIN_EPISODES` independent episodes; tighter rates are still
+listed, marked `← мало эпизодов`, because a Wilson bound over two or three
+episodes clears 1.0 by luck. If nothing is recommended, the honest move is more
+history (roadmap D3), not a tighter threshold. Read-only; writes
+`logs/operating_curve.json`.
+
 ## Magnitude or direction? (label decomposition)
 ```bash
 python scripts/run_label_decomposition.py

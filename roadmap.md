@@ -228,13 +228,22 @@ a known inaccuracy or dead end, not a feature wish.
       horizon question too, which the 7-hour segment structurally cannot: at
       h=60 it admits at most 7 independent episodes.
 
-- [ ] **D4 — The measured operating point is not an operating point.**
+- [x] **D4 — The measured operating point is not an operating point.
+      `TOOL BUILT, AWAITING A LIVE RUN`**
       Precision was compared at a 1% alert budget: **388 alerts/day across 27
-      symbols**. That is a firehose, not something a person acts on. A usable
-      rate is 10–20/day, and precision there has never been measured — it is a
-      different, much more selective point on the same curve.
-      *Do:* report the precision/recall curve down to realistic budgets and set
-      the live thresholds from that, not from the measurement budget.
+      symbols**. That is a firehose, not something a person acts on.
+      `scripts/run_operating_curve.py` now sweeps the alert rate over the live
+      model's out-of-sample segment and reports, for each rate, the calibrated
+      cut, the equivalent `prob_lift_min` to paste into config, and the
+      precision it buys. Tested for the round trip: the recommended lift fed
+      back through the gate's own rule reproduces the measured cut exactly.
+      A rate is only recommended on at least `MIN_EPISODES` independent
+      episodes — without that floor the rule picked 10 alerts/day off TWO
+      episodes while rejecting 20/day at three, a lucky draw that would have
+      gone straight into the live config.
+      *Expect on live data:* the 48h window gives a ~7h test segment, so the
+      tightest rates will likely come back underpowered. That is the honest
+      answer and the reason D3 matters, not a fault in the curve.
 
 - [ ] **D5 — No time-of-day or market-regime context.**
       A pump at 03:00 UTC on a thin book and one in the US session are different
