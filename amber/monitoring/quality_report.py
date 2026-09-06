@@ -79,9 +79,17 @@ def _confirmed_outcome(
     horizon_candles: int,
     target_up_pct: float,
     step_ms: int = 60_000,
+    *,
+    both_directions: bool = False,
 ) -> int | None:
-    """1/0 if the pump target was/wasn't hit within the horizon; None while the
-    horizon has not fully elapsed in the data (unconfirmed)."""
+    """1/0 if the target was/wasn't hit within the horizon; None while the
+    horizon has not fully elapsed in the data (unconfirmed).
+
+    `both_directions` scores the question the model is now trained on: did price
+    travel the target either way. Scoring a movement signal against a pump-only
+    outcome would count every correctly predicted downward move as a miss and
+    report roughly half the true hit rate.
+    """
     candles = index.candles(symbol)
     if not candles:
         return None
@@ -95,13 +103,18 @@ def _confirmed_outcome(
     deadline = event_ts + horizon_candles * step_ms
     if ts_list[-1] < deadline:
         return None  # horizon not yet elapsed -> outcome unknown
-    target = entry_price * (1.0 + target_up_pct)
+    up_level = entry_price * (1.0 + target_up_pct)
+    down_level = entry_price * (1.0 - target_up_pct)
     for c in candles[entry_i + 1 :]:
         ts = int(c.get("ts", 0) or 0)
         if ts > deadline:
             break
-        if float(c.get("high", 0.0) or 0.0) >= target:
+        if float(c.get("high", 0.0) or 0.0) >= up_level:
             return 1
+        if both_directions:
+            low = float(c.get("low", 0.0) or 0.0)
+            if low > 0 and low <= down_level:
+                return 1
     return 0
 
 
@@ -192,6 +205,13 @@ def build_quality_report(
             continue
         bias_m.update(p_up, p_dn)
 
+        # Score the signal against the question it was making a claim about.
+        # A movement signal graded on a pump-only outcome counts every correctly
+        # called downward move as a miss, halving the apparent hit rate.
+        p_move = _safe_prob(r.get("prob_move_calibrated"))
+        scored_prob = p_move if p_move is not None else p_up
+        movement_signal = p_move is not None
+
         if index is None:
             continue
         event_ts = _event_ts_ms(r.get("event_ts"))
@@ -200,12 +220,14 @@ def build_quality_report(
         target_up = float(r.get("target_up_pct", 0.0) or 0.0)
         if event_ts is None or not symbol or horizon <= 0:
             continue
-        outcome = _confirmed_outcome(index, symbol, event_ts, horizon, target_up)
+        outcome = _confirmed_outcome(
+            index, symbol, event_ts, horizon, target_up, both_directions=movement_signal
+        )
         if outcome is None:
             unconfirmed += 1
             continue
         confirmed += 1
-        auc_m.update(outcome, p_up)
+        auc_m.update(outcome, scored_prob)
 
     return {
         "signals": len(rows),

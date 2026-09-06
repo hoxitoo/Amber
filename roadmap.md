@@ -184,6 +184,29 @@ a known inaccuracy or dead end, not a feature wish.
       a failure but a redefinition: "scanner of starting volatility" is honest,
       useful and reachable, while "direction predictor" would not be.
 
+- [ ] **D10 — Come back for direction. `FUTURE — deliberately deferred`**
+      Measured on live data 2026-09-06: direction is **not** predicted at all.
+      `direction` scored precision 0.590 against a 0.587 base rate — the model
+      adds **+0.3 percentage points** over naively saying "up" every time, and
+      that 0.587 is itself just the market rising during the test window. The
+      whole of the production target's lift 11.82 is explained by magnitude
+      times that drift: 0.850 × 0.587 = 0.499 against an observed 0.530.
+      **The product was therefore redefined as a volatility scanner**, and the
+      direction call belongs to the person reading the chart.
+      *This is a deferral, not a closed question.* Two things are worth being
+      precise about:
+      - With 12 episodes the measurement can only exclude a *large* directional
+        effect (precision ≥ 0.90). A moderate one — 65–70%, still tradeable —
+        is not excluded by the interval, although the point estimate gives no
+        hint of one either. This needs D3's longer window to settle.
+      - The pump/dump heads are **kept** rather than deleted, precisely so this
+        can be revisited without rebuilding the machinery: they keep training,
+        `scripts/run_label_decomposition.py` re-answers the question on demand,
+        and only the *primary* signal moved to `move`.
+      *Revisit when:* D3 gives 50+ episodes, or a genuinely leading input lands
+      (D2/D7 — which are not worth buying for direction on today's evidence, but
+      would change it if acquired for other reasons).
+
 - [ ] **D2 — "Early stage" is unreachable on 1m bars.**
       By the time a 1-minute candle closes and `range_atr_14` registers a spike,
       the move is a minute old — mid-move, not early, on a venue where bots act

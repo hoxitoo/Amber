@@ -163,8 +163,27 @@ def passes_thresholds(
     down_min: float,
     directional_min: float,
     spread_max_bps: float,
+    move_min: float | None = None,
 ) -> bool:
+    """Gate a signal.
+
+    With `move_min` the decision is "will price travel the barrier at all",
+    which is the question the model was shown to answer (roadmap D10). The
+    directional filter is deliberately NOT applied in that mode: it demands
+    |p_up - p_down| be large, which suppresses exactly the two-sided, volatile
+    setups a volatility scanner exists to surface — and it was screening on a
+    difference between two heads measured to carry no directional information.
+
+    Without `move_min` the legacy directional gate is kept intact, so models
+    trained before the change keep behaving as they did.
+    """
+    spread_ok = spread_bps(signal) <= spread_max_bps
+    if move_min is not None:
+        move = signal.prob_move_calibrated
+        if move is None:
+            move = min(1.0, signal.prob_up_calibrated + signal.prob_down_calibrated)
+        return move >= move_min and spread_ok
+
     prob_ok = signal.prob_up_calibrated >= up_min or signal.prob_down_calibrated >= down_min
     dir_ok = abs(directional_score(signal)) >= directional_min
-    spread_ok = spread_bps(signal) <= spread_max_bps
     return prob_ok and dir_ok and spread_ok

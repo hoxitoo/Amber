@@ -81,6 +81,17 @@ def scan_once(
     up_min = effective_prob_min(thresholds, base_rate_for(model, "pump"), absolute_key="pump_prob_calibrated_min")
     down_min = effective_prob_min(thresholds, base_rate_for(model, "dump"), absolute_key="dump_prob_calibrated_min")
 
+    # Gate on movement when the model has a `move` head (roadmap D10). Older
+    # models have no such head and keep the directional gate, so a rollback or a
+    # stale artifact degrades to the previous behaviour rather than firing on
+    # everything.
+    heads = model.get("heads", {})
+    move_min = None
+    if isinstance(heads, dict) and "move" in heads:
+        move_min = effective_prob_min(
+            thresholds, base_rate_for(model, "move"), absolute_key="move_prob_calibrated_min"
+        )
+
     feature_rows = _read_latest_feature_rows(features_root, allowed_symbols=universe)
     emitted = 0
     for row in feature_rows:
@@ -101,12 +112,17 @@ def scan_once(
             down_min=down_min,
             directional_min=float(thresholds.get("directional_score_min", 0.2)),
             spread_max_bps=float(thresholds.get("spread_bps_max", 30.0)),
+            move_min=move_min,
         ) and gate.allow(signal):
             _append_signal(logs_root, signal)
             route_alert(signal, channels=alert_channels, limiter=alert_limiter)
             emitted += 1
 
-    logger.info("scan finished universe=%s symbols=%s emitted=%s", len(universe), len(feature_rows), emitted)
+    logger.info(
+        "scan finished universe=%s symbols=%s emitted=%s gate=%s",
+        len(universe), len(feature_rows), emitted,
+        f"move>={move_min:.4f}" if move_min is not None else f"dir up>={up_min:.4f}/down>={down_min:.4f}",
+    )
     return emitted
 
 

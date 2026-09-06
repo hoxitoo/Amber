@@ -158,7 +158,7 @@ root = D.find_project_root()
 
 with st.sidebar:
     st.markdown("## 🟡 Amber")
-    st.caption("ML-сканер событий Bybit · pump/dump вероятности")
+    st.caption("ML-сканер Bybit · вероятность начала движения (направление — за вами, roadmap D10)")
     st.markdown(f"<span style='font-size:12px;opacity:.7'>Проект: <code>{root}</code></span>", unsafe_allow_html=True)
     if st.button("🔄 Обновить данные", width="stretch"):
         st.cache_data.clear()
@@ -234,9 +234,8 @@ with tab_overview:
                 {
                     "время": str(s.get("event_ts", ""))[:19].replace("T", " "),
                     "символ": s.get("symbol", ""),
-                    "направление": "🟢 pump" if D.signal_direction(s) == "pump" else "🔴 dump",
-                    "P(pump)": float(s.get("prob_up_calibrated", 0) or 0),
-                    "P(dump)": float(s.get("prob_down_calibrated", 0) or 0),
+                    "P(движение)": D.signal_move_prob(s),
+                    "склон": D.signal_lean(s),
                     "spread": round(float(s.get("market_context", {}).get("spread_bps", 0) or 0), 2),
                     "драйверы": D.signal_top_drivers(s),
                 }
@@ -246,10 +245,23 @@ with tab_overview:
             width="stretch",
             hide_index=True,
             column_config={
-                "P(pump)": st.column_config.ProgressColumn("P(pump)", min_value=0.0, max_value=1.0, format="%.3f"),
-                "P(dump)": st.column_config.ProgressColumn("P(dump)", min_value=0.0, max_value=1.0, format="%.3f"),
+                "P(движение)": st.column_config.ProgressColumn(
+                    "P(движение)", min_value=0.0, max_value=1.0, format="%.3f"
+                ),
                 "spread": st.column_config.NumberColumn("spread, bps"),
             },
+        )
+        # Direction is shown as a lean, never as a call. Measured on live data:
+        # 0.590 precision against a 0.587 base rate, i.e. +0.3pp over saying
+        # "up" every time. Presenting it as a prediction would be the single
+        # most misleading thing this dashboard could do.
+        st.caption(
+            "**P(движение)** — вероятность, что цена пройдёт целевые "
+            f"{float(signals[0].get('target_up_pct', 0.01) or 0.01) * 100:.1f}% "
+            "в любую сторону за горизонт. Это то, что модель предсказывает и на чём стоит гейт.\n\n"
+            "**Склон** — куда модель слегка кренится. Это НЕ прогноз направления: на живых данных "
+            "направление дало точность 0.590 при базовой частоте 0.587, то есть +0.3 п.п. к наивному "
+            "«всегда вверх». Направление определяете вы по графику (roadmap D10)."
         )
 
 # --- Model quality -----------------------------------------------------------

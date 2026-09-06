@@ -1,8 +1,18 @@
 # Project Amber
 
-Amber — local-first ML scanner for Bybit futures that predicts **event probabilities** (`pump/dump`) and emits alerts.
+Amber — local-first ML scanner for Bybit futures that predicts **the probability
+that price is about to move** and emits alerts.
 
 > Amber is not an auto-trading bot. No order execution logic is in scope.
+
+> **It does not call direction.** Measured on live mainnet data (2026-09-06),
+> the direction of a move is not predicted: 0.590 precision against a 0.587 base
+> rate, i.e. +0.3 percentage points over saying "up" every time. Magnitude is a
+> different story — when the model fires, price travels the 1% target within 15
+> minutes **85%** of the time against a 7.5% base rate. So Amber tells you
+> *something is about to happen here*, and which way is yours to read. The
+> direction heads keep training for a deferred revisit (roadmap D10); see
+> `docs/target_review_2026-09.md`.
 
 ## Current state (July 20, 2026)
 - End-to-end pipeline works on real Bybit v5 contracts: WS collector (kline + tickers) → incremental idempotent normalize → features → dataset → LightGBM train/calibrate/eval → scanner/alerts.

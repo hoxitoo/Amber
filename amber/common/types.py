@@ -26,6 +26,15 @@ class SignalV1(BaseModel):
     horizon_min: int
     target_up_pct: float
     target_down_pct: float
+    # Primary since 2026-09-06: P(price travels the barrier, either way).
+    # Direction was measured on live data and found absent — 0.590 precision
+    # against a 0.587 base rate — so this is what the scanner gates on and what
+    # an alert's confidence refers to. Optional so signals logged before the
+    # change still load. See roadmap D10.
+    prob_move_raw: float | None = None
+    prob_move_calibrated: float | None = None
+    # Direction, retained as context and for the deferred D10 revisit. NOT
+    # validated: do not gate on these or present them as a call.
     prob_up_raw: float
     prob_down_raw: float
     prob_up_calibrated: float

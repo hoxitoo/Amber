@@ -233,6 +233,37 @@ def drift_report(features_dir: str, model: dict[str, Any] | None, symbols: list[
     return out
 
 
+def signal_move_prob(sig: dict[str, Any]) -> float:
+    """P(price travels the target either way) — what the model predicts.
+
+    Reconstructed from the direction heads for signals logged before the head
+    existed, so old rows still render a number rather than a blank column.
+    """
+    move = sig.get("prob_move_calibrated")
+    if move is not None:
+        try:
+            return max(0.0, min(1.0, float(move)))
+        except (TypeError, ValueError):
+            pass
+    up = float(sig.get("prob_up_calibrated", 0.0) or 0.0)
+    dn = float(sig.get("prob_down_calibrated", 0.0) or 0.0)
+    return max(0.0, min(1.0, up + dn))
+
+
+def signal_lean(sig: dict[str, Any]) -> str:
+    """Which way the model tilts — context, never a directional call.
+
+    Measured on live data, direction scored 0.590 precision against a 0.587 base
+    rate: +0.3pp over saying "up" every time. Rendered as a faint lean with a
+    neutral band so it cannot be read as a prediction (roadmap D10).
+    """
+    up = float(sig.get("prob_up_calibrated", 0.0) or 0.0)
+    dn = float(sig.get("prob_down_calibrated", 0.0) or 0.0)
+    if abs(up - dn) < 0.05:
+        return "—"
+    return "слегка ↑" if up > dn else "слегка ↓"
+
+
 def signal_direction(sig: dict[str, Any]) -> str:
     up = float(sig.get("prob_up_calibrated", 0.0) or 0.0)
     dn = float(sig.get("prob_down_calibrated", 0.0) or 0.0)

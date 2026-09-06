@@ -91,6 +91,11 @@ def _top_impacts(
     return [{name: float(value)} for name, value in ordered[: max(1, top_n)]]
 
 
+def _has_head(model: dict[str, Any], name: str) -> bool:
+    heads = model.get("heads")
+    return isinstance(heads, dict) and name in heads
+
+
 def score_signal(
     feature_row: dict[str, Any],
     models_root: Path,
@@ -105,12 +110,25 @@ def score_signal(
         model = load_latest_model(models_root)
     calib = calibration if calibration is not None else _load_latest_calibration(models_root)
 
+    # `move` is the head the scanner acts on. It is absent from models trained
+    # before 2026-09-06, in which case it is reconstructed from the direction
+    # heads rather than left empty: P(move) = P(up) + P(down) once the two are
+    # made coherent, since under the barrier definition they are exclusive as
+    # first-touch events.
+    move_raw = infer_row_prob(model, feature_row, target="move") if _has_head(model, "move") else None
+
     up_raw = infer_row_prob(model, feature_row, target="pump")
     down_raw = infer_row_prob(model, feature_row, target="dump")
 
     up_cal = calibrated_prob_for_target(up_raw, calibration=calib, target="pump")
     down_cal = calibrated_prob_for_target(down_raw, calibration=calib, target="dump")
     up_cal, down_cal = coherent_pump_dump(up_cal, down_cal)
+
+    if move_raw is None:
+        move_raw = min(1.0, up_raw + down_raw)
+        move_cal = min(1.0, up_cal + down_cal)
+    else:
+        move_cal = calibrated_prob_for_target(move_raw, calibration=calib, target="move")
 
     directional = up_cal - down_cal
 
@@ -136,6 +154,8 @@ def score_signal(
         horizon_min=int(labeling.get("horizon_steps", 5)),
         target_up_pct=float(labeling.get("avg_up_pct", 0.002)),
         target_down_pct=float(labeling.get("avg_down_pct", 0.002)),
+        prob_move_raw=move_raw,
+        prob_move_calibrated=move_cal,
         prob_up_raw=up_raw,
         prob_down_raw=down_raw,
         prob_up_calibrated=up_cal,

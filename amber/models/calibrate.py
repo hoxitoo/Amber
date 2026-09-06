@@ -8,6 +8,7 @@ from typing import Any
 
 from amber.common.manifest import ArtifactManifest, new_run_id, write_manifest
 from amber.models.dataset_io import load_latest_dataset_rows, order_with_pseudo_time, split_rows
+from amber.labeling.events import move_label
 from amber.models.infer import infer_row_prob, load_latest_model
 from amber.models.registry import latest_registered
 
@@ -72,7 +73,7 @@ def calibrate_model(
 
     def _fit_head(target: str, label_key: str) -> dict[str, Any]:
         raw = [infer_row_prob(model, r, target=target) for r in holdout]
-        y = [int(r.get(label_key, 0)) for r in holdout]
+        y = [move_label(r) if label_key == "move_hit" else int(r.get(label_key, 0)) for r in holdout]
 
         if method == "platt" and len(set(y)) > 1:
             try:
@@ -110,11 +111,24 @@ def calibrate_model(
                 "observed": observed,
             }
 
-    pump_cal = _fit_head(target="pump", label_key="up_hit")
-    dump_cal = _fit_head(target="dump", label_key="down_hit")
+    # Only calibrate heads the model actually has. A model trained before `move`
+    # existed — or restored from an older artifact — must not take down the
+    # retrain loop, and inference for a missing head raises rather than
+    # returning a default.
+    model_heads = model.get("heads", {}) if isinstance(model.get("heads"), dict) else {}
+    cal_heads: dict[str, Any] = {}
+    # `move` first: it is the head the scanner gates on, so its calibration is
+    # what makes "85% confidence" mean 85% (roadmap D10).
+    for target, label_key in (("move", "move_hit"), ("pump", "up_hit"), ("dump", "down_hit")):
+        if target in model_heads:
+            cal_heads[target] = _fit_head(target=target, label_key=label_key)
+        else:
+            logger.warning("model has no %s head; skipping its calibration", target)
+    pump_cal = cal_heads.get("pump", {"method": "identity"})
+    dump_cal = cal_heads.get("dump", {"method": "identity"})
     payload: dict[str, Any] = {
         "method": "multi_head",
-        "heads": {"pump": pump_cal, "dump": dump_cal},
+        "heads": cal_heads,
         "model_run_id": model_run_id,
         "rows": len(holdout),
         "holdout_ratio": holdout_ratio,

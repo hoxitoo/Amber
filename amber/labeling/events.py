@@ -1,8 +1,22 @@
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Any, Mapping, Sequence
 
 LABEL_SHAPES = ("two_sided", "one_sided")
+
+
+def move_label(row: Mapping[str, Any]) -> int:
+    """`move_hit` for a dataset row: did price travel the barrier, either way.
+
+    Derived when absent so a model can still be trained on a dataset built
+    before this became the primary target. Every consumer must go through here:
+    defaulting a missing `move_hit` to 0 would hand the head a single class and
+    collapse it to a constant, which is how a previous target change silently
+    produced `constant_dual_v1` for hours.
+    """
+    if "move_hit" in row:
+        return int(row["move_hit"] or 0)
+    return int(bool(int(row.get("up_hit", 0) or 0) or int(row.get("down_hit", 0) or 0)))
 
 
 def label_event_path(prices: Sequence[float], up_pct: float, down_pct: float) -> dict[str, int | None]:

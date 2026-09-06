@@ -8,6 +8,7 @@ from typing import Any
 
 from amber.common.manifest import ArtifactManifest, new_run_id, write_manifest
 from amber.models.dataset_io import load_latest_dataset_rows, order_with_pseudo_time, split_rows
+from amber.labeling.events import move_label
 from amber.models.features import MODEL_FEATURES, feature_vector
 from amber.models.split import make_holdout_splits, make_time_walk_forward_folds
 
@@ -131,9 +132,20 @@ def _fit_dual(rows: list[dict[str, Any]]) -> dict[str, Any]:
     w = [1.0 / max(1, int(r.get("horizon_steps", 1) or 1)) for r in rows]
     y_up = [int(r.get("up_hit", 0)) for r in rows]
     y_down = [int(r.get("down_hit", 0)) for r in rows]
+    y_move = [move_label(r) for r in rows]
+
+    # `move` is the primary head: will price travel the barrier at all. Direction
+    # was measured on live data and found absent (roadmap D10), so this is the
+    # question the feature set can actually answer.
+    move = _fit_head(x, y_move, w)
+    # pump/dump are kept, not deleted. They cost one fit each, they keep the
+    # direction question measurable by run_label_decomposition.py, and D10 is a
+    # deferral rather than a closed case: a moderate directional effect is not
+    # excluded by 12 episodes, only a large one.
     pump = _fit_head(x, y_up, w)
     dump = _fit_head(x, y_down, w)
-    head_types = {pump["type"], dump["type"]}
+
+    head_types = {move["type"], pump["type"], dump["type"]}
     if "lightgbm" in head_types:
         model_type = "lightgbm_dual_v1"
     elif "logreg" in head_types:
@@ -143,7 +155,8 @@ def _fit_dual(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "model_type": model_type,
         "features": list(MODEL_FEATURES),
-        "heads": {"pump": pump, "dump": dump},
+        "heads": {"move": move, "pump": pump, "dump": dump},
+        "primary_target": "move",
         "clip_bounds": bounds,
         "train_rows": len(rows),
     }

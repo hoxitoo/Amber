@@ -228,6 +228,13 @@ def build_dataset(
                         "obs": rows[i].get("obs", 0),
                         "up_hit": labels["up_hit"],
                         "down_hit": labels["down_hit"],
+                        # The primary target since 2026-09-06: "did price move
+                        # by the barrier at all, either way". Direction was
+                        # measured on live data and found absent — precision
+                        # 0.590 against a 0.587 base rate, +0.3pp over naively
+                        # saying "up" — so the model is trained to answer the
+                        # question it can answer. See roadmap D10.
+                        "move_hit": int(bool(labels["up_hit"] or labels["down_hit"])),
                         "first_hit": labels["first_hit"],
                         "tte_idx": labels["tte_idx"],
                         "horizon_steps": horizon,
