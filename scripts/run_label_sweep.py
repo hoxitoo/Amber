@@ -23,7 +23,34 @@ from amber.common.config import ConfigLoader  # noqa: E402
 from amber.common.logging import setup_logging  # noqa: E402
 
 
+def _check_deps() -> str | None:
+    """Fail with the command to use rather than a traceback from deep inside a
+    training fallback.
+
+    Run with the system interpreter this dies as ModuleNotFoundError: lightgbm,
+    then again as ModuleNotFoundError: sklearn from the fallback path — two
+    tracebacks that say nothing about the actual mistake, which is that the
+    deps live in the venv the services run from.
+    """
+    try:
+        import sklearn  # noqa: F401
+    except ImportError:
+        return (
+            "Dependencies are missing from this interpreter.\n"
+            f"  running: {sys.executable}\n\n"
+            "Amber's services run from the project venv. Use it:\n"
+            "  sudo -u amber /opt/amber/.venv/bin/python scripts/run_label_sweep.py --budget 0.01\n\n"
+            "Run as the `amber` user so logs/label_sweep.json stays writable by the pipeline."
+        )
+    return None
+
+
 def main() -> int:
+    problem = _check_deps()
+    if problem:
+        print(problem, file=sys.stderr)
+        return 1
+
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--horizons", default="15,30,60", help="comma-separated bar counts")
     p.add_argument("--rulers", default=",".join(RULERS), help=f"any of: {', '.join(RULERS)}")
