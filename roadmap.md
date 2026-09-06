@@ -54,13 +54,30 @@ Legend: `[x]` done · `[~]` partial · `[ ]` planned.
 
 ## Current state (honest)
 
-Everything above the line is **built, tested (127 tests), and works end-to-end on
-synthetic data**. The machinery is sound. What is **not** yet proven is the one
-thing that matters commercially:
+Built and tested (285 tests), running 24/7 on real Bybit mainnet data over 27
+symbols. Sprint 1's open question — *does the model have real predictive edge?*
+— has a first real-data answer, and it is qualified rather than clean:
 
-> **Does the model have real predictive edge?** All positive metrics to date are
-> from synthetic data with signal injected on purpose. This can only be answered
-> by collecting real Bybit mainnet data and reading out-of-sample PR-AUC.
+> **Measured 2026-09-06.** At a fixed 1% barrier over 15 bars with one-sided
+> labels, precision was 58% against a 5.8% base rate: **lift 4.51** after a
+> family-wise correction across 24 label definitions and after collapsing
+> correlated alerts into 18 independent market episodes. The ordering of all
+> eight ruler/shape combinations replicated identically across two horizons
+> (Spearman 0.976), which is stronger evidence than any single interval.
+
+Three qualifications, all tracked in Sprint 5 and none of them cosmetic:
+
+1. **It is not established that the edge is directional** (D1). `range_atr_14`
+   holds 32.4% of permutation importance, so the model is substantially a
+   volatility forecaster, and a pure magnitude forecaster scores lift ≈ 2 on
+   this label by construction. The share of 4.51 that is direction is unknown.
+2. **It was measured in one market session** (D3) — 18 episodes inside ~7 hours.
+3. **It was measured at 388 alerts/day** (D4), which is a firehose. Precision at
+   a rate a person can actually act on has not been measured.
+
+The previous label — a volatility-scaled barrier — ranked **last of 24** at lift
+0.21–0.39, i.e. its alerts were indistinguishable from random. It had been live
+for roughly ten days. See `docs/target_review_2026-09.md`.
 
 See `docs/audit_review_board_2026-07.md` for the full institutional audit.
 
@@ -133,6 +150,88 @@ how confident the model is, and later whether it was right.
       running hit-rate summary (and, once volume allows, hit-rate broken down by
       confidence bucket to validate S4.1's calibration end-to-end).
 
+### Sprint 5 — does the edge point anywhere? · **planned (not started)**
+
+Raised 2026-09-06, after the label sweep replaced the target (see
+`docs/target_review_2026-09.md`). The stated goal of the project is to *catch
+volatility at its earliest stage and determine direction*. These items are the
+gap between that sentence and what the system currently measures. Every one is
+a known inaccuracy or dead end, not a feature wish.
+
+- [ ] **D1 — Separate "will it move" from "which way". `PRIORITY 1`**
+      The goal names two different questions and the label merges them.
+      `up_hit` means "rose 1%", so a model that forecasts *magnitude* perfectly
+      and knows *nothing* about sign still scores lift ≈ 2, because half of all
+      large moves are up. M3 says this is not hypothetical: `range_atr_14`
+      carries 32.4% of permutation importance, i.e. the model is largely a
+      volatility forecaster. **An unknown share of the sweep's lift 4.51 is
+      magnitude, not direction.**
+      *Do:* label `move_hit` (|move| ≥ target, either sign) and `direction`
+      (sign, conditional on a move having happened), run the existing sweep
+      against each, and report two lifts instead of one.
+      *Why first:* costs no new data, reuses `scripts/run_label_sweep.py`, and
+      its answer decides whether D2/D7 are worth their cost. A likely outcome is
+      that magnitude is strong and direction is near a coin flip — which is not
+      a failure but a redefinition: "scanner of starting volatility" is honest,
+      useful and reachable, while "direction predictor" would not be.
+
+- [ ] **D2 — "Early stage" is unreachable on 1m bars.**
+      By the time a 1-minute candle closes and `range_atr_14` registers a spike,
+      the move is a minute old — mid-move, not early, on a venue where bots act
+      in milliseconds. The three order-flow features exist but are aggregated to
+      the minute and measured at 0.0016 / 0.0009 / 0.0009 importance, under 1%
+      combined: they were flattened into uselessness by the bar.
+      *Do:* consume `publicTrade` at tick level and L2 `orderbook` deltas —
+      aggressor imbalance, depth imbalance, liquidation bursts, OI jumps — on a
+      sub-minute clock. Overlaps T3's remainder and T1.
+      *Gate:* only worth the collection and storage cost if D1 finds directional
+      signal to sharpen.
+
+- [ ] **D3 — Every result so far comes from one market session.**
+      The adopted label was selected on 18 independent episodes inside a ~7-hour
+      test segment. Crypto has strong intraday seasonality (Asia / Europe / US)
+      and regimes lasting days. Lift 4.51 is a one-regime measurement.
+      *Do:* re-run the sweep on a longer window (`--max-candles 6000+`) once
+      history allows, and evaluate per session and per regime. Settles the
+      horizon question too, which the 7-hour segment structurally cannot: at
+      h=60 it admits at most 7 independent episodes.
+
+- [ ] **D4 — The measured operating point is not an operating point.**
+      Precision was compared at a 1% alert budget: **388 alerts/day across 27
+      symbols**. That is a firehose, not something a person acts on. A usable
+      rate is 10–20/day, and precision there has never been measured — it is a
+      different, much more selective point on the same curve.
+      *Do:* report the precision/recall curve down to realistic budgets and set
+      the live thresholds from that, not from the measurement budget.
+
+- [ ] **D5 — No time-of-day or market-regime context.**
+      A pump at 03:00 UTC on a thin book and one in the US session are different
+      events with different exit liquidity. Nothing in the feature set separates
+      them.
+
+- [ ] **D6 — No "what already happened" state.**
+      P(+1% | coin already up 8% this hour) differs sharply from P(+1% | quiet).
+      `dist_to_low_20` gestures at this and scores 0.0008 importance.
+      *Do:* explicit run-up / drawdown-from-recent-extreme features over several
+      lookbacks. Cheap: computable from data already collected.
+
+- [ ] **D7 — Nothing checks whether a signal is tradeable.**
+      The spread filter (30 bps) exists; book depth does not. An alert on a coin
+      with $2 000 resting within 1% is not actionable at any size. Precedes T1
+      and shares its L2 collection.
+
+- [ ] **D8 — Prune the 9 dead features.**
+      M3 measured 9 of 21 at or below shuffle noise, with the top five carrying
+      97%. They contribute nothing and give the model surface to overfit.
+      Cheap, and should follow D1 so pruning is judged against the right target.
+
+- [ ] **D9 — Normalized history is re-parsed unbounded.**
+      Costs roughly 12 s per pipeline cycle today and is the CPU ceiling that
+      caps the universe near 100 symbols. Prerequisite for any expansion beyond
+      the current 27.
+
 ### Backlog
 - [ ] T6 cross-exchange lead/lag features · A7 feature-list relocation.
+- [ ] Universe expansion to 100–200 symbols. Measured ceilings: memory ~50
+      symbols at a 48h window, CPU ~100 symbols, the latter set by D9.
 - [ ] API + multi-tenant observability (SaaS direction).
