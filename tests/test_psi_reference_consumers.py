@@ -76,11 +76,68 @@ class TestReferenceConsumers(unittest.TestCase):
     def test_detect_drift_handles_the_model_format(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            _write_features(root / "features")
+            _write_features(root / "features", n=2600)
             ref = _feature_quantiles(_train_rows())
             res = detect_drift(root / "features", "BTCUSDT", reference=ref)
-            self.assertEqual(res["reference"], "train_quantiles")
+            self.assertEqual(res["reference"], "self_history")
             self.assertLess(res["max_psi"], 0.2)
+
+    def test_quiet_symbol_is_not_flagged_against_a_pooled_reference(self):
+        """A coin whose range sits entirely inside one decile of the universe.
+
+        The per-symbol table used to score each symbol against the model's
+        pooled `train_reference`. A low-volatility coin then put every one of
+        its rows into a single bin of that pooled grid and PSI pinned at ~12.4 —
+        permanent "high drift" for all 27 symbols, while the pooled PSI on the
+        model tab read "low". Nothing about the coin had changed.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            rng = random.Random(11)
+            d = root / "features" / "features" / "QUIETUSDT"
+            d.mkdir(parents=True)
+            with (d / "part-000.jsonl").open("w", encoding="utf-8") as fh:
+                for i in range(2600):  # stationary, but 20x tighter than the pool
+                    fh.write(json.dumps({
+                        "ts": 1_700_000_000_000 + i * 60_000,
+                        "ret_1": rng.gauss(0, 0.0005),
+                        "vol_z_20": rng.gauss(0, 1),
+                        "spread_bps": abs(rng.gauss(2, 0.5)),
+                        "breakout_up_20": 1.0 if i % 20 == 0 else 0.0,
+                    }) + "\n")
+
+            pooled = _feature_quantiles(_train_rows())
+            res = detect_drift(root / "features", "QUIETUSDT", reference=pooled)
+
+            self.assertFalse(res["drift"], res["per_feature"])
+            self.assertEqual(res["level"], "low")
+            self.assertLess(res["max_psi"], 0.2)
+            # The old bug's exact arithmetic signature: all mass in one bin of a
+            # 10-bin grid scored against uniform expected shares.
+            self.assertLess(res["max_psi"], 12.0)
+
+    def test_real_regime_change_is_still_detected(self):
+        """Self-referencing must not make the table blind to actual drift."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            rng = random.Random(12)
+            d = root / "features" / "features" / "SHIFTUSDT"
+            d.mkdir(parents=True)
+            with (d / "part-000.jsonl").open("w", encoding="utf-8") as fh:
+                for i in range(2600):
+                    sigma = 0.001 if i < 2100 else 0.05  # volatility explodes
+                    fh.write(json.dumps({
+                        "ts": 1_700_000_000_000 + i * 60_000,
+                        "ret_1": rng.gauss(0, sigma),
+                        "vol_z_20": rng.gauss(0, 1),
+                        "spread_bps": abs(rng.gauss(2, 0.5)),
+                        "breakout_up_20": 1.0 if i % 20 == 0 else 0.0,
+                    }) + "\n")
+
+            res = detect_drift(root / "features", "SHIFTUSDT")
+            self.assertTrue(res["drift"], res["per_feature"])
+            self.assertEqual(res["level"], "high")
+            self.assertIn("ret_1", res["per_feature"])
 
     def test_legacy_bare_edge_lists_still_work(self):
         """Models trained before the change must not crash the report."""

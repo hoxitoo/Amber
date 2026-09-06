@@ -14,18 +14,34 @@ except Exception:  # pragma: no cover - fallback if sklearn unavailable
     roc_auc_score = None
 
 
-def _read_feature_rows(features_root: Path, symbol: str) -> list[dict[str, Any]]:
+def _read_feature_rows(features_root: Path, symbol: str, max_rows: int | None = None) -> list[dict[str, Any]]:
+    """Feature rows for one symbol, newest last.
+
+    `max_rows` bounds the read: these files hold tens of thousands of rows per
+    symbol and the dashboard walks every symbol on each render, so slurping them
+    whole cost memory proportional to accumulated history.
+    """
+    from amber.common.jsonl import read_tail
+
+    parts = sorted((features_root / "features" / symbol).glob("part-*.jsonl"))
     rows: list[dict[str, Any]] = []
-    for path in sorted((features_root / "features" / symbol).glob("part-*.jsonl")):
-        with path.open("r", encoding="utf-8") as fh:
-            for line in fh:
-                if not line.strip():
-                    continue
-                try:
-                    rows.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
-    return rows
+    if max_rows is None:
+        for path in parts:
+            with path.open("r", encoding="utf-8") as fh:
+                for line in fh:
+                    if not line.strip():
+                        continue
+                    try:
+                        rows.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+        return rows
+
+    for path in reversed(parts):  # newest part first, stop once satisfied
+        rows = read_tail(path, max_rows) + rows
+        if len(rows) >= max_rows:
+            break
+    return rows[-max_rows:]
 
 
 def detect_drift(
@@ -35,16 +51,26 @@ def detect_drift(
     *,
     reference: dict[str, list[float]] | None = None,
     window: int = 500,
+    baseline_window: int = 2000,
 ) -> dict[str, Any]:
-    """Feature drift via PSI.
+    """Regime drift for ONE symbol: its recent window against its own past.
 
-    With a train `reference` (quantile edges per feature, stored in the model
-    artifact as `train_reference`), recent live values are compared against the
-    training distribution. Without one, it degrades to split-half PSI on `ret_1`.
-    Returns drift=True when max PSI exceeds `threshold` (0.1 warn / 0.2 alert
-    are the conventional PSI levels).
+    The reference is built from this symbol's earlier rows, not from the model's
+    pooled `train_reference`. Scoring a single coin against a universe-wide
+    reference compares two different populations: a quiet coin sits permanently
+    in the bottom deciles of the pooled distribution, so every one of its rows
+    lands in one bin and PSI pins at ~12.4 — the same arithmetic signature as
+    audit B4b, but from cross-sectional spread rather than tied edges. That made
+    the per-symbol table read "high" for all 27 symbols indefinitely while the
+    pooled PSI on the model tab correctly read "low".
+
+    `reference` is now used only to choose which features to score, keeping the
+    table aligned with what the live model actually consumes. Without enough
+    history it degrades to split-half PSI on `ret_1`. Returns drift=True when
+    max PSI exceeds `threshold` (0.1 warn / 0.2 alert are the conventional PSI
+    levels).
     """
-    rows = _read_feature_rows(features_root, symbol)
+    rows = _read_feature_rows(features_root, symbol, max_rows=baseline_window + window)
     ret_vals = [float(r.get("ret_1", 0.0)) for r in rows]
     mid = len(ret_vals) // 2
     delta_ret_mean = 0.0
@@ -54,13 +80,26 @@ def detect_drift(
         delta_ret_mean = abs(m2 - m1)
 
     per_feature: dict[str, float] = {}
-    if reference:
-        recent = rows[-window:]
-        for name, edges in reference.items():
+    mode = "split_half"
+    recent = rows[-window:]
+    baseline = rows[: -len(recent)] if len(recent) < len(rows) else []
+    # A baseline much shorter than the comparison window has quantile edges too
+    # noisy to score against, which would manufacture drift on quiet symbols.
+    if len(baseline) >= max(200, window // 2) and len(recent) >= 20:
+        from amber.models.train import _feature_quantiles
+
+        self_ref = _feature_quantiles(baseline)
+        names = set(reference) if reference else set(self_ref)
+        for name, ref in self_ref.items():
+            if name not in names:
+                continue
             live = [float(r.get(name, 0.0) or 0.0) for r in recent]
             if len(live) >= 20:
-                per_feature[name] = psi_from_quantile_reference(edges, live)
-    elif len(ret_vals) >= 4:
+                per_feature[name] = psi_from_quantile_reference(ref, live)
+        if per_feature:
+            mode = "self_history"
+
+    if not per_feature and len(ret_vals) >= 4:
         per_feature["ret_1"] = psi(ret_vals[:mid], ret_vals[mid:])
 
     max_psi = max(per_feature.values()) if per_feature else 0.0
@@ -70,7 +109,7 @@ def detect_drift(
         "max_psi": max_psi,
         "level": level,
         "per_feature": per_feature,
-        "reference": "train_quantiles" if reference else "split_half",
+        "reference": mode,
         "delta_ret_mean": delta_ret_mean,
     }
 

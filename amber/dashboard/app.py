@@ -304,14 +304,33 @@ with tab_model:
         else:
             b1, b2, b3, b4, b5 = st.columns(5)
             b1.metric("Сделок", _num(bt.get("signals"), "{:.0f}", "0"))
-            b2.metric("Win rate", _num(bt.get("win_rate")))
-            b3.metric("Sharpe", _num(bt.get("sharpe")))
+            # Win rate counts only trades that reached a barrier (TP/(TP+SL)),
+            # while profit factor is over every trade — a timeout pays the
+            # round-trip cost and shows up in neither the wins nor the losses of
+            # that ratio. Reading them side by side without the resolution rate
+            # made a 62.5% win rate look like it cleared a 56.6% break-even when
+            # 70% of trades were expiring flat and paying the spread.
+            b2.metric("Win rate (по дошедшим)", _num(bt.get("win_rate")))
+            b3.metric("Дошли до барьера", _num(bt.get("resolution_rate")))
             b4.metric("Profit factor", _num(bt.get("profit_factor"), "{:.2f}"))
             b5.metric("Max drawdown", _num(bt.get("max_drawdown"), "{:.4f}"))
+            tp = int(bt.get("tp", 0) or 0)
+            sl = int(bt.get("sl", 0) or 0)
+            to = int(bt.get("timeout", 0) or 0)
+            exp_bps = float(bt.get("expectancy", 0.0) or 0.0) * 10_000
             st.caption(
+                f"TP {tp} · SL {sl} · таймаут {to} (каждый платит комиссию) · "
+                f"матожидание {exp_bps:+.2f} bps/сделку · Sharpe {_num(bt.get('sharpe'))} · "
                 f"режим: {bt.get('mode', '—')} · сегмент: {bt.get('segment', '—')} · "
                 f"лаг входа: {bt.get('entry_lag_bars', 0)} бар"
             )
+            if to > tp + sl:
+                st.warning(
+                    f"Таймаутов больше, чем разрешённых сделок ({to} против {tp + sl}). "
+                    "Win rate считается только по дошедшим до барьера, поэтому он выглядит "
+                    "лучше, чем экономика: при текущей доле дошедших PF не превысит 1, "
+                    "даже если направление угадывается верно."
+                )
 
         # --- Calibration health (M5) -----------------------------------------
         _section("Калибровка", "насколько «30%» действительно означает 30% · перекалибровка между переобучениями")

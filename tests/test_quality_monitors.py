@@ -81,18 +81,27 @@ class TestQualityMonitors(unittest.TestCase):
             self.assertEqual(out["level"], "high")
 
     def test_detect_drift_with_train_reference(self):
+        """The pooled reference now selects WHICH features to score; the
+        comparison itself is the symbol against its own past."""
+        import random
+
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             p = root / "features" / "BTCUSDT"
             p.mkdir(parents=True)
-            # live ret_1 sits far outside the train reference grid
-            rows = [json.dumps({"ret_1": 0.5}) for _ in range(50)]
+            rng = random.Random(3)
+            rows = [
+                json.dumps({"ret_1": rng.gauss(0, 0.001 if i < 2100 else 0.05), "vol_z_20": rng.gauss(0, 1)})
+                for i in range(2600)
+            ]
             (p / "part-000.jsonl").write_text("\n".join(rows) + "\n", encoding="utf-8")
             reference = {"ret_1": [-0.01 + i * 0.002 for i in range(11)]}
             out = detect_drift(root, "BTCUSDT", reference=reference)
             self.assertTrue(out["drift"])
-            self.assertEqual(out["reference"], "train_quantiles")
+            self.assertEqual(out["reference"], "self_history")
             self.assertIn("ret_1", out["per_feature"])
+            # `vol_z_20` is stationary AND absent from the reference: not scored.
+            self.assertNotIn("vol_z_20", out["per_feature"])
 
 
 if __name__ == "__main__":
