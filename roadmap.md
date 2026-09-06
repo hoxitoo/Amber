@@ -158,7 +158,16 @@ volatility at its earliest stage and determine direction*. These items are the
 gap between that sentence and what the system currently measures. Every one is
 a known inaccuracy or dead end, not a feature wish.
 
-- [ ] **D1 — Separate "will it move" from "which way". `PRIORITY 1`**
+- [x] **D1 — Separate "will it move" from "which way". `TOOL BUILT, AWAITING A LIVE RUN`**
+      `scripts/run_label_decomposition.py` trains one head per factor and reports
+      each separately. Validated against a fixture where a volatility burst is
+      predictable and the sign is a fair coin: it reports `move` at lift 3.62
+      (bound 2.42) and `direction` at 1.12 (bound 0.74), verdict
+      `magnitude_only` — while the production `pump` target on that same data
+      reads lift 3.64 with a *significant* bound of 1.77. That is the trap in
+      one line: pump looks like directional edge and is entirely magnitude. The
+      complement fixture, with the sign leaked into a feature, returns `both`.
+      *Remaining:* run it on the live box and act on the verdict.
       The goal names two different questions and the label merges them.
       `up_hit` means "rose 1%", so a model that forecasts *magnitude* perfectly
       and knows *nothing* about sign still scores lift ≈ 2, because half of all

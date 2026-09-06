@@ -197,6 +197,10 @@ def build_arm_rows(
                     "ts": int(src.get("ts", 0) or 0),
                     "up_hit": int(labels["up_hit"]),
                     "down_hit": int(labels["down_hit"]),
+                    # Which barrier came first. The sweep itself never needs it,
+                    # but under one-sided labels it is the ONLY way to recover
+                    # direction from a row, and the decomposition depends on it.
+                    "first_hit": int(labels["first_hit"] or 0),
                     "horizon_steps": horizon,
                     "up_pct": half,
                     "down_pct": half,

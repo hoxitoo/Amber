@@ -57,6 +57,23 @@ alert budget**, measured both on the scoring bar and with the one-bar delay a
 human actually acts under. Read-only: it trains each arm in memory and writes
 only `logs/label_sweep.json`, so it is safe to run against a live box.
 
+## Magnitude or direction? (label decomposition)
+```bash
+python scripts/run_label_decomposition.py
+```
+`P(up_hit) = P(move) × P(up | move)`, so lift on the production target can come
+from forecasting *how big* a move will be or *which way* it goes — and a pure
+volatility forecaster scores lift ≈ 2 on it by construction. This trains one
+head per factor and reports them apart: `move` over all rows, `direction` over
+the move subset only (scoring it over all rows lets magnitude leak back in).
+`direction` has a base rate near 0.5, so its lift is read against a coin flip.
+
+Read the `verdict`. `magnitude_only` means the product is a scanner of starting
+volatility and the direction call belongs to the human — buying tick-level order
+flow or L2 depth would then be sharpening a signal that is not there. Read-only;
+writes `logs/label_decomposition.json`.
+
+## Reading the label sweep
 The column that decides things is `lift1_lo` — the lift still supported after
 comparing every arm (family-wise 95%), at the lag a human actually acts under.
 `lift1_lo <= 1.00` means the arm is indistinguishable from firing at random.
