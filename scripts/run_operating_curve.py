@@ -22,7 +22,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amber.backtest.operating_point import DEFAULT_RATES, format_curve, operating_curve, save_curve  # noqa: E402
-from amber.common.config import ConfigLoader  # noqa: E402
+from amber.common.config import ConfigLoader, enter_project_root  # noqa: E402
 from amber.common.logging import setup_logging  # noqa: E402
 
 
@@ -55,7 +55,7 @@ def main() -> int:
     p.add_argument("--target", default="move", choices=("move", "pump", "dump"))
     args = p.parse_args()
 
-    root = Path.cwd()
+    root = enter_project_root(__file__)
     config = ConfigLoader(root).load_yaml("config/amber.yaml")
     setup_logging(config.get("run", {}).get("log_level", "INFO"))
     storage = config.get("storage", {})

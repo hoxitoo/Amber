@@ -21,7 +21,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amber.backtest.decomposition import decompose, format_report, save_report  # noqa: E402
-from amber.common.config import ConfigLoader  # noqa: E402
+from amber.common.config import ConfigLoader, enter_project_root  # noqa: E402
 from amber.common.logging import setup_logging  # noqa: E402
 
 
@@ -52,7 +52,7 @@ def main() -> int:
     p.add_argument("--max-candles", type=int, default=None, help="candles per symbol (default: config)")
     args = p.parse_args()
 
-    root = Path.cwd()
+    root = enter_project_root(__file__)
     config = ConfigLoader(root).load_yaml("config/amber.yaml")
     setup_logging(config.get("run", {}).get("log_level", "INFO"))
     lab = config.get("labeling", {})

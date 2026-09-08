@@ -1,9 +1,26 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+
+def enter_project_root(script_file: str | Path) -> Path:
+    """chdir to the project root and return it.
+
+    Storage paths in `config/amber.yaml` are relative (`data/raw`, ...), and the
+    systemd units resolve them by setting `WorkingDirectory=/opt/amber`. A
+    script run from anywhere else therefore points at directories that do not
+    exist — or, run from a home directory, fails to open its own file with a
+    permission error that says nothing about the actual mistake. Anchoring on
+    the script's own location makes an analysis script behave identically
+    wherever it is invoked from.
+    """
+    root = Path(script_file).resolve().parents[1]
+    os.chdir(root)
+    return root
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:

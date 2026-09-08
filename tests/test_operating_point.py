@@ -72,6 +72,39 @@ class TestLiftInversion(unittest.TestCase):
         self.assertIsNone(lift_for_threshold(1.0, 0.1))
 
 
+class TestRunsFromAnywhere(unittest.TestCase):
+    """Storage paths in the config are relative, so the working directory is
+    load-bearing. Run from a home directory the script could not even open its
+    own file, failing with a permission error that named nothing real."""
+
+    def test_entering_the_project_root_finds_the_config(self):
+        import os
+
+        from amber.common.config import ConfigLoader, enter_project_root
+
+        previous = Path.cwd()
+        try:
+            os.chdir(tempfile.gettempdir())
+            root = enter_project_root(REPO / "scripts" / "run_operating_curve.py")
+
+            self.assertEqual(root, REPO)
+            self.assertEqual(Path.cwd(), REPO)
+            self.assertIn("labeling", ConfigLoader(root).load_yaml("config/amber.yaml"))
+        finally:
+            os.chdir(previous)
+
+
+class TestMissingArtifactsAreReported(unittest.TestCase):
+    """Right after a target change there is no dataset yet. That is the normal
+    state, and it must read as a wait rather than a traceback."""
+
+    def test_absent_dataset(self):
+        with tempfile.TemporaryDirectory() as td:
+            report = operating_curve(Path(td) / "datasets", Path(td) / "models")
+            self.assertEqual(report["status"], "no_dataset")
+            self.assertIn("retrain cycle", format_curve(report))
+
+
 class TestOperatingCurve(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:

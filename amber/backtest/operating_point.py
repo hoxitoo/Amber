@@ -75,10 +75,18 @@ def operating_curve(
     if target not in LABEL_KEYS:
         raise ValueError(f"target must be one of {sorted(LABEL_KEYS)}, got {target!r}")
 
-    all_rows, dataset_run = load_latest_dataset_rows(datasets_root)
+    # A missing dataset or model is the normal state right after a target change
+    # or a fresh deploy, not a crash: the pipeline has not rebuilt yet.
+    try:
+        all_rows, dataset_run = load_latest_dataset_rows(datasets_root)
+    except (ValueError, FileNotFoundError, OSError) as exc:
+        return {"status": "no_dataset", "detail": str(exc)}
     if not all_rows:
-        return {"status": "no_dataset"}
-    model = load_latest_model(models_root)
+        return {"status": "no_dataset", "detail": "dataset is empty"}
+    try:
+        model = load_latest_model(models_root)
+    except (ValueError, FileNotFoundError, OSError) as exc:
+        return {"status": "no_model", "detail": str(exc)}
     heads = model.get("heads", {}) if isinstance(model.get("heads"), dict) else {}
     if target not in heads:
         return {"status": "no_head", "target": target, "heads": sorted(heads)}
@@ -165,7 +173,16 @@ def operating_curve(
 
 def format_curve(report: dict[str, Any]) -> str:
     if report.get("status") != "ok":
-        return f"operating curve unavailable: {report.get('status')} {report.get('heads', '')}".strip()
+        status = report.get("status")
+        hint = {
+            "no_dataset": "the pipeline has not built a dataset yet — wait for a retrain cycle",
+            "no_model": "no model has been trained yet — wait for a retrain cycle",
+            "empty_test_segment": "dataset too small for a holdout split; wait for more history",
+            "no_positive_labels": "no events in the test segment; wait for more history",
+            "no_head": f"model has heads {report.get('heads')} — retrain to get the requested one",
+        }.get(status, "")
+        detail = report.get("detail", "")
+        return " ".join(x for x in (f"operating curve unavailable: {status}", hint, detail) if x)
 
     def _f(v: Any, spec: str = "{:.3f}") -> str:
         return spec.format(v) if isinstance(v, (int, float)) else "—"
