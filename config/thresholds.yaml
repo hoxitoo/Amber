@@ -4,7 +4,20 @@ thresholds:
   # for a rare event rarely exceeds a fixed absolute probability, so an absolute
   # cut like 0.65 never fires. Instead a signal must be BOTH above an absolute
   # floor AND a meaningful multiple over the head's own base rate.
-  prob_lift_min: 2.0      # calibrated prob >= 2x the head's base rate
+  # Measured, not guessed: scripts/run_operating_curve.py, 2026-09-08.
+  # At the `move` head's 0.1732 base rate this is a 0.6667 calibrated cut,
+  # ~400 alerts/day across 27 symbols, precision 0.631 (lift 3.64, bound 1.16).
+  #
+  # The previous 2.0 was never measured against anything. It works out to a
+  # 0.2953 cut — looser than every point on the curve, so the scanner was
+  # emitting MORE than 400/day and the concurrency limiter was picking which
+  # five survived.
+  #
+  # Deliberately not tighter. The curve keeps improving (0.846 at 100/day,
+  # 1.000 at 20/day) but those rest on 2 independent episodes in a 6-hour test
+  # segment, which is a lucky draw rather than evidence. Re-run the curve once
+  # more history has accumulated (roadmap D3) before tightening further.
+  prob_lift_min: 9.55
   prob_abs_floor: 0.12    # ...and never below this absolute calibrated prob
   # NOT APPLIED while the model has a `move` head. The directional filter asks
   # |p_up - p_down| to be large, which suppresses exactly the two-sided volatile

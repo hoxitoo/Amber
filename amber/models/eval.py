@@ -209,6 +209,49 @@ def evaluate_model(
         out["pr_auc_up_lift"] = pr_up / out["base_rate_up"]
     if pr_down is not None and out["base_rate_down"] > 0:
         out["pr_auc_down_lift"] = pr_down / out["base_rate_down"]
+
+    # The `move` head is what the scanner gates on (roadmap D10), so its
+    # precision at its own operating point is the headline number. Without this
+    # every reported metric described the pump head — a head that no longer
+    # drives anything — and "fires on 0 rows" warned about a threshold nothing
+    # was being gated by.
+    heads = model.get("heads", {}) if isinstance(model.get("heads"), dict) else {}
+    if "move" in heads:
+        from amber.labeling.events import move_label
+
+        y_move = [move_label(r) for r in rows]
+        probs_move_cal = [
+            calibrated_prob_for_target(
+                infer_row_prob(model, r, target="move"), calibration, target="move"
+            )
+            for r in rows
+        ]
+        move_min = threshold
+        if thresholds:
+            from amber.signals.filters import base_rate_for, effective_prob_min
+
+            move_min = effective_prob_min(
+                thresholds, base_rate_for(model, "move"), absolute_key="move_prob_calibrated_min"
+            )
+        preds_move = [1 if p >= move_min else 0 for p in probs_move_cal]
+        tp_m = sum(1 for yp, yt in zip(preds_move, y_move) if yp == 1 and yt == 1)
+        fp_m = sum(1 for yp, yt in zip(preds_move, y_move) if yp == 1 and yt == 0)
+        base_move = sum(y_move) / len(y_move)
+        out.update({
+            "threshold_move": float(move_min),
+            "n_predicted_move": float(sum(preds_move)),
+            "precision_move_at_threshold": 0.0 if tp_m + fp_m == 0 else tp_m / (tp_m + fp_m),
+            "base_rate_move": base_move,
+            "brier_move_cal": sum((p - yt) ** 2 for p, yt in zip(probs_move_cal, y_move)) / len(y_move),
+        })
+        auc_move = _safe_auc(y_move, probs_move_cal)
+        if auc_move is not None:
+            out["auc_move_cal"] = auc_move
+        pr_move = _safe_pr_auc(y_move, probs_move_cal)
+        if pr_move is not None:
+            out["pr_auc_move_cal"] = pr_move
+            if base_move > 0:
+                out["pr_auc_move_lift"] = pr_move / base_move
     return out
 
 

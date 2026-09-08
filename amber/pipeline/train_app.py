@@ -35,6 +35,12 @@ _METRIC_KEYS = (
     "pr_auc_down_cal",
     "pr_auc_up_lift",
     "pr_auc_down_lift",
+    # The head the scanner gates on (roadmap D10).
+    "precision_move_at_threshold",
+    "brier_move_cal",
+    "pr_auc_move_cal",
+    "pr_auc_move_lift",
+    "auc_move_cal",
 )
 
 
@@ -107,13 +113,21 @@ def run_training(
     # panel, from a model with no skill: precision reads 0.000 and the backtest
     # reads 0 trades. That pairing has twice been a threshold fault rather than
     # a modelling one (audit B3, B6), so name it at the moment it is detectable.
-    fired = float(ev.get("n_predicted_up", 0.0)) + float(ev.get("n_predicted_down", 0.0))
+    # Check the head the scanner actually gates on; the direction heads are
+    # context now and their thresholds gate nothing.
+    if "n_predicted_move" in ev:
+        fired, thr, base, which = (
+            float(ev["n_predicted_move"]), ev.get("threshold_move", 0.0),
+            ev.get("base_rate_move", 0.0), "move",
+        )
+    else:
+        fired = float(ev.get("n_predicted_up", 0.0)) + float(ev.get("n_predicted_down", 0.0))
+        thr, base, which = ev.get("threshold_up", 0.0), ev.get("base_rate_up", 0.0), "up/down"
     if fired <= 0:
         logger.warning(
-            "model fires on 0 of %s eval rows at thresholds up=%.4f down=%.4f (base rates %.4f/%.4f) — "
+            "model fires on 0 of %s eval rows: %s head at threshold %.4f against base rate %.4f — "
             "the operating point is unreachable, not the model necessarily weak; check config/thresholds.yaml",
-            int(ev.get("rows", 0)), ev.get("threshold_up", 0.0), ev.get("threshold_down", 0.0),
-            ev.get("base_rate_up", 0.0), ev.get("base_rate_down", 0.0),
+            int(ev.get("rows", 0)), which, thr, base,
         )
 
     # Feature importance on the out-of-sample segment: measured where the model

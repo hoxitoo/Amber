@@ -34,13 +34,19 @@ def _write_symbol(features_root: Path, symbol: str, n: int, seed: int) -> None:
     d = features_root / "features" / symbol
     d.mkdir(parents=True, exist_ok=True)
     spikes = [rng.random() < 0.005 for _ in range(n)]
+    # Volatility stays elevated for the whole burst, as ATR does in a real one.
+    # Marking only the ignition bar left most positive rows indistinguishable
+    # from noise, so the model could never be confident: it topped out at 0.44
+    # calibrated while the live model reaches 0.79. The fixture was the weak
+    # part, not the threshold.
+    in_burst = [spikes[i] or any(spikes[max(0, i - 15):i]) for i in range(n)]
     price, ts = 100.0, 1_700_000_000_000
     with (d / "part-000.jsonl").open("w", encoding="utf-8") as fh:
         for i in range(n):
             row = {name: rng.gauss(0, 1) for name in MODEL_FEATURES}
             recent = any(spikes[max(0, i - 15):i])
-            row["vol_z_20"] = 3.0 if spikes[i] else rng.gauss(0, 1)
-            row["range_atr_14"] = 2.5 if spikes[i] else rng.gauss(0, 1)
+            row["vol_z_20"] = 3.0 if in_burst[i] else rng.gauss(0, 1)
+            row["range_atr_14"] = 2.5 if in_burst[i] else rng.gauss(0, 1)
             row["ret_1"] = rng.gauss(0.0, 0.0008) + (0.0009 if recent else 0.0)
             price *= 1 + row["ret_1"]
             row.update({
@@ -130,14 +136,18 @@ class TestPipelineEndToEnd(unittest.TestCase):
         model rather than a broken configuration.
         """
         ev = self.result["eval"]
+        # The head the scanner gates on. Asserting on the pump head would test a
+        # threshold that no longer decides anything.
+        self.assertIn("n_predicted_move", ev, "eval did not measure the gating head")
         self.assertGreater(
-            ev["n_predicted_up"], 0,
-            f"nothing fires at threshold {ev['threshold_up']:.4f} against base rate {ev['base_rate_up']:.4f}",
+            ev["n_predicted_move"], 0,
+            f"nothing fires at threshold {ev['threshold_move']:.4f} "
+            f"against base rate {ev['base_rate_move']:.4f}",
         )
-        self.assertGreater(ev["threshold_up"], ev["base_rate_up"], "threshold below base rate is not selective")
+        self.assertGreater(ev["threshold_move"], ev["base_rate_move"], "threshold below base rate is not selective")
 
     def test_the_model_finds_the_planted_edge(self):
-        self.assertGreater(self.result["eval"].get("pr_auc_up_lift", 0.0), 1.2)
+        self.assertGreater(self.result["eval"].get("pr_auc_move_lift", 0.0), 1.2)
 
     def test_thresholds_are_actually_found(self):
         """A silent {} here is what makes every panel read 0."""

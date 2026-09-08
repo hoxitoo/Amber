@@ -41,6 +41,20 @@ def _read_latest_feature_rows(features_root: Path, allowed_symbols: set[str] | N
     return rows
 
 
+def _gating_prob(signal: SignalV1, on_move: bool) -> float:
+    """The probability the gate actually decided on, used to rank candidates.
+
+    Ranking by something other than the gating quantity would order the alert
+    list by one criterion while admitting it by another.
+    """
+    if on_move:
+        move = signal.prob_move_calibrated
+        if move is not None:
+            return float(move)
+        return min(1.0, signal.prob_up_calibrated + signal.prob_down_calibrated)
+    return max(signal.prob_up_calibrated, signal.prob_down_calibrated)
+
+
 def _append_signal(logs_root: Path, signal: SignalV1) -> None:
     logs_root.mkdir(parents=True, exist_ok=True)
     out = logs_root / "signals.jsonl"
@@ -93,7 +107,8 @@ def scan_once(
         )
 
     feature_rows = _read_latest_feature_rows(features_root, allowed_symbols=universe)
-    emitted = 0
+
+    candidates: list[tuple[float, SignalV1]] = []
     for row in feature_rows:
         if bool(row.get("is_synthetic", False)):
             continue  # do not signal on gap-filled candles
@@ -113,7 +128,20 @@ def scan_once(
             directional_min=float(thresholds.get("directional_score_min", 0.2)),
             spread_max_bps=float(thresholds.get("spread_bps_max", 30.0)),
             move_min=move_min,
-        ) and gate.allow(signal):
+        ):
+            candidates.append((_gating_prob(signal, move_min is not None), signal))
+
+    # Strongest first. `SignalGate` hands out its `concurrent_limit` slots on a
+    # first-come basis, and rows arrive sorted by symbol, so the slots were going
+    # to whichever symbols come first ALPHABETICALLY among those over the
+    # threshold — ASTERUSDT ahead of ZECUSDT regardless of which the model
+    # actually preferred. With a loose threshold most of the universe qualifies,
+    # so the alert list was largely alphabetical rather than ranked.
+    candidates.sort(key=lambda pair: pair[0], reverse=True)
+
+    emitted = 0
+    for _prob, signal in candidates:
+        if gate.allow(signal):
             _append_signal(logs_root, signal)
             route_alert(signal, channels=alert_channels, limiter=alert_limiter)
             emitted += 1

@@ -145,6 +145,77 @@ class TestGate(unittest.TestCase):
         )
 
 
+class TestScannerRanksBeforeGating(unittest.TestCase):
+    """Slots must go to the strongest signals, not the alphabetically first.
+
+    SignalGate hands out `concurrent_limit` slots first-come-first-served, and
+    feature rows arrive sorted by symbol. With a loose threshold most of the
+    universe qualifies, so the emitted list was largely alphabetical.
+    """
+
+    def _run(self, tmp: Path, probs: dict[str, float], limit: int) -> list[str]:
+        import json as _j
+
+        from amber.pipeline.scanner_app import scan_once
+        from amber.signals.filters import SignalGate
+        from amber.storage.state_store import StateStore
+
+        feats = tmp / "features" / "features"
+        for symbol in probs:
+            d = feats / symbol
+            d.mkdir(parents=True, exist_ok=True)
+            row = {name: 0.0 for name in MODEL_FEATURES}
+            # vol_z_20 drives the stub model below
+            row["vol_z_20"] = probs[symbol]
+            row.update({"ts": 1_700_000_000_000, "symbol": symbol, "mid_price": 100.0,
+                        "obs": 200, "is_synthetic": False, "spread_bps": 1.0})
+            (d / "part-000.jsonl").write_text(_j.dumps(row) + "\n", encoding="utf-8")
+
+        models = tmp / "models" / "model_20260101T000000Z_abcd1234"
+        models.mkdir(parents=True, exist_ok=True)
+        (models / "model.json").write_text(_j.dumps({
+            "model_type": "logreg_dual_v1",
+            "features": list(MODEL_FEATURES),
+            "heads": {
+                "move": {"type": "logreg", "weights": {"vol_z_20": 8.0}, "bias": -4.0, "label_rate": 0.2},
+                "pump": {"type": "logreg", "weights": {}, "bias": -2.0, "label_rate": 0.1},
+                "dump": {"type": "logreg", "weights": {}, "bias": -2.0, "label_rate": 0.1},
+            },
+            "labeling": {"horizon_steps": 15, "avg_up_pct": 0.01, "avg_down_pct": 0.01},
+        }), encoding="utf-8")
+        (tmp / "models" / "registry.json").write_text(
+            _j.dumps({"model_run_id": models.name}), encoding="utf-8")
+
+        config = {
+            "storage": {"features_dir": str(tmp / "features"), "models_dir": str(tmp / "models"),
+                        "logs_dir": str(tmp / "logs"), "state_dir": str(tmp / "state")},
+            "signal": {"schema_version": "v1", "top_k_universe": 50, "min_dollar_volume": 0.0},
+            "labeling": {"min_warmup_bars": 60},
+            "alerts": {"channels": []},
+        }
+        thresholds = {"prob_lift_min": 1.0, "prob_abs_floor": 0.0, "spread_bps_max": 100.0,
+                      "directional_score_min": 0.0, "concurrent_limit": limit, "cooldown_sec": 0}
+        gate = SignalGate(cooldown_sec=0, concurrent_limit=limit, slot_ttl_sec=900,
+                          store=StateStore(tmp / "state"))
+        from amber.alerts.router import AlertRateLimiter
+        scan_once(config, thresholds, gate, AlertRateLimiter(cooldown_sec=0, store=StateStore(tmp / "state")))
+
+        out = tmp / "logs" / "signals.jsonl"
+        if not out.exists():
+            return []
+        return [_j.loads(line)["symbol"] for line in out.read_text().splitlines() if line.strip()]
+
+    def test_the_strongest_symbols_take_the_slots_not_the_first_alphabetically(self):
+        with tempfile.TemporaryDirectory() as td:
+            # AAA is alphabetically first but weakest; ZZZ is strongest.
+            emitted = self._run(
+                Path(td),
+                {"AAAUSDT": 0.55, "MMMUSDT": 0.75, "ZZZUSDT": 1.20},
+                limit=1,
+            )
+            self.assertEqual(emitted, ["ZZZUSDT"], "slot went to the alphabet, not the model")
+
+
 class TestOutcomeConfirmation(unittest.TestCase):
     """A movement signal graded on a pump-only outcome counts every correctly
     called downward move as a miss."""
