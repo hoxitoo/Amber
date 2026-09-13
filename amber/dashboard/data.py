@@ -161,35 +161,45 @@ def dataset_info(datasets_dir: str) -> dict[str, Any] | None:
     return info
 
 
-def candle_stats(raw_dir: str, symbols: list[str]) -> list[dict[str, Any]]:
-    """Per-symbol normalized-candle counts, synthetic ratio and last update age."""
+def candle_stats(raw_dir: str, symbols: list[str], sample: int = 2000) -> list[dict[str, Any]]:
+    """Per-symbol normalized-candle counts, synthetic ratio and last update age.
+
+    The count is exact but obtained by counting newlines rather than parsing
+    every row: at 62k candles across 27 symbols, JSON-decoding the lot on every
+    dashboard render cost seconds for three numbers.
+
+    The synthetic share is measured over the most recent `sample` rows rather
+    than all history. That is also the more useful question — whether gaps are
+    being filled *now* — and it is labelled as a recent share in the UI.
+    """
+    from amber.common.jsonl import read_tail
+
     now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
     out: list[dict[str, Any]] = []
     for symbol in symbols:
+        parts = sorted((Path(raw_dir) / "normalized" / symbol).glob("part-*.jsonl"))
         total = 0
-        synthetic = 0
-        last_ts = 0
-        for part in sorted((Path(raw_dir) / "normalized" / symbol).glob("part-*.jsonl")):
-            with part.open("r", encoding="utf-8") as fh:
-                for line in fh:
-                    if not line.strip():
-                        continue
-                    try:
-                        row = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    total += 1
-                    if row.get("is_synthetic"):
-                        synthetic += 1
-                    ts = int(row.get("ts", 0) or 0)
-                    if ts > last_ts:
-                        last_ts = ts
+        for part in parts:
+            with part.open("rb") as fh:
+                while chunk := fh.read(1 << 20):
+                    total += chunk.count(b"\n")
+
+        recent: list[dict[str, Any]] = []
+        for part in reversed(parts):
+            recent = read_tail(part, sample) + recent
+            if len(recent) >= sample:
+                break
+        recent = recent[-sample:]
+
+        last_ts = max((int(r.get("ts", 0) or 0) for r in recent), default=0)
+        synthetic = sum(1 for r in recent if r.get("is_synthetic"))
         age_min = None if last_ts == 0 else max(0.0, (now_ms - last_ts) / 60_000)
         out.append(
             {
                 "symbol": symbol,
                 "candles": total,
-                "synthetic_pct": (100.0 * synthetic / total) if total else 0.0,
+                "synthetic_pct": (100.0 * synthetic / len(recent)) if recent else 0.0,
+                "synthetic_sample": len(recent),
                 "last_update_min": age_min,
             }
         )

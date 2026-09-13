@@ -286,10 +286,17 @@ with tab_model:
     if report is not None:
         q = report.get("quality", {})
         bt = report.get("backtest", {})
-        _section("Качество на реальных исходах", "только подтверждённые события")
+        window = int(q.get("window_max_signals", 0) or 0)
+        _section(
+            "Качество на реальных исходах",
+            f"только подтверждённые события · скользящее окно последних {window:,} сигналов".replace(",", " ")
+            if window else "только подтверждённые события",
+        )
         q1, q2, q3, q4 = st.columns(4)
         q1.metric("Rolling AUC", _num(q.get("rolling_auc")))
-        q2.metric("Подтв. исходов", _num(q.get("auc_confirmed_outcomes"), "{:.0f}", "0"))
+        # Deliberately "в окне": both monitors are 200-wide, so a cumulative
+        # count here would describe rows neither number is computed from.
+        q2.metric("Подтв. исходов в окне", _num(q.get("auc_confirmed_outcomes"), "{:.0f}", "0"))
         q3.metric("Bias (pump−dump)", _num(q.get("prediction_bias")))
         q4.metric("PSI дрифт", str(q.get("psi", {}).get("level", "—")))
 
@@ -468,7 +475,7 @@ with tab_data:
             columns={
                 "symbol": "символ",
                 "candles": "свечей",
-                "synthetic_pct": "синтетика",
+                "synthetic_pct": "синтетика (недавние)",
                 "last_update_min": "обновлено",
             }
         )

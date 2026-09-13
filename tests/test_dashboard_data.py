@@ -33,8 +33,17 @@ class TestDashboardData(unittest.TestCase):
                     fh.write((r if isinstance(r, str) else json.dumps(r)) + "\n")
             stats = D.candle_stats(str(raw), ["BTCUSDT", "ETHUSDT"])
             btc = next(s for s in stats if s["symbol"] == "BTCUSDT")
-            self.assertEqual(btc["candles"], 3)
+
+            # `candles` counts lines rather than decoding every row: at 62k
+            # candles across 27 symbols, JSON-parsing all of it on every render
+            # cost seconds for one number. A malformed line therefore counts as
+            # a line of recorded data — surfacing corruption in the total rather
+            # than quietly subtracting it.
+            self.assertEqual(btc["candles"], 4)
+            # The synthetic share is measured over decoded rows, so the bad line
+            # is excluded there: 1 synthetic out of 3 readable.
             self.assertAlmostEqual(btc["synthetic_pct"], 100 / 3)
+            self.assertEqual(btc["synthetic_sample"], 3)
             eth = next(s for s in stats if s["symbol"] == "ETHUSDT")
             self.assertEqual(eth["candles"], 0)
 

@@ -56,20 +56,45 @@ def _event_ts_ms(value: Any) -> int | None:
 
 
 class _CandleIndex:
-    """Lazy per-symbol index of normalized candles for outcome confirmation."""
+    """Lazy per-symbol index of normalized candles for outcome confirmation.
 
-    def __init__(self, raw_root: Path) -> None:
+    The timestamp array is cached alongside the candles. It used to be rebuilt
+    inside `_confirmed_outcome` on every call, which is the same list every
+    time: at 20k signals against 62k candles per symbol that is 1.2 billion
+    element constructions per report, and it was the single reason the dashboard
+    took minutes to load rather than seconds.
+    """
+
+    def __init__(self, raw_root: Path, max_rows: int | None = None) -> None:
         self.raw_root = raw_root
+        self.max_rows = max_rows
         self._cache: dict[str, list[dict[str, Any]]] = {}
+        self._ts_cache: dict[str, list[int]] = {}
 
     def candles(self, symbol: str) -> list[dict[str, Any]]:
         if symbol not in self._cache:
             rows: list[dict[str, Any]] = []
-            for part in sorted((self.raw_root / "normalized" / symbol).glob("part-*.jsonl")):
-                rows.extend(_read_jsonl_tolerant(part))
+            parts = sorted((self.raw_root / "normalized" / symbol).glob("part-*.jsonl"))
+            if self.max_rows is None:
+                for part in parts:
+                    rows.extend(_read_jsonl_tolerant(part))
+            else:
+                # Newest part first, stopping once satisfied: outcome confirmation
+                # only ever looks forward from a signal, so history older than the
+                # oldest signal under consideration is never consulted.
+                for part in reversed(parts):
+                    rows = read_tail(part, self.max_rows) + rows
+                    if len(rows) >= self.max_rows:
+                        break
+                rows = rows[-self.max_rows:]
             rows.sort(key=lambda r: int(r.get("ts", 0) or 0))
             self._cache[symbol] = rows
+            self._ts_cache[symbol] = [int(r.get("ts", 0) or 0) for r in rows]
         return self._cache[symbol]
+
+    def timestamps(self, symbol: str) -> list[int]:
+        self.candles(symbol)  # populates both caches
+        return self._ts_cache[symbol]
 
 
 def _confirmed_outcome(
@@ -93,7 +118,7 @@ def _confirmed_outcome(
     candles = index.candles(symbol)
     if not candles:
         return None
-    ts_list = [int(c.get("ts", 0) or 0) for c in candles]
+    ts_list = index.timestamps(symbol)
     entry_i = bisect_right(ts_list, event_ts) - 1
     if entry_i < 0:
         return None
@@ -105,10 +130,12 @@ def _confirmed_outcome(
         return None  # horizon not yet elapsed -> outcome unknown
     up_level = entry_price * (1.0 + target_up_pct)
     down_level = entry_price * (1.0 - target_up_pct)
-    for c in candles[entry_i + 1 :]:
-        ts = int(c.get("ts", 0) or 0)
-        if ts > deadline:
+    # Walk by index rather than slicing: `candles[entry_i + 1:]` copies the tail
+    # of a 62k-element list once per signal.
+    for i in range(entry_i + 1, len(candles)):
+        if ts_list[i] > deadline:
             break
+        c = candles[i]
         if float(c.get("high", 0.0) or 0.0) >= up_level:
             return 1
         if both_directions:
@@ -176,11 +203,26 @@ def _feature_psi(
     }
 
 
+def _count_lines(path: Path) -> int:
+    """Line count without parsing — the signal log grows without bound and its
+    total is only ever displayed, never computed on."""
+    if not path.exists():
+        return 0
+    total = 0
+    with path.open("rb") as fh:
+        while chunk := fh.read(1 << 20):
+            total += chunk.count(b"\n")
+    return total
+
+
 def build_quality_report(
     signals_path: Path,
     raw_root: Path | None = None,
     models_root: Path | None = None,
     features_root: Path | None = None,
+    *,
+    max_signals: int = 2000,
+    candle_tail: int = 10_000,
 ) -> dict[str, Any]:
     """Model-quality snapshot from emitted signals.
 
@@ -193,8 +235,13 @@ def build_quality_report(
     auc_m = RollingAUCMonitor(window=200)
     bias_m = PredictionBiasMonitor(window=200)
 
-    rows = _read_jsonl_tolerant(signals_path)
-    index = _CandleIndex(raw_root) if raw_root is not None else None
+    # Both monitors are 200-wide, so only the most recent outcomes can affect
+    # either number. Walking the entire signal log against the entire candle
+    # history to feed them cost minutes on a box that has been running for
+    # weeks, and every one of those extra rows was discarded by the window.
+    signals_total = _count_lines(signals_path)
+    rows = read_tail(signals_path, max_signals)
+    index = _CandleIndex(raw_root, max_rows=candle_tail) if raw_root is not None else None
 
     confirmed = 0
     unconfirmed = 0
@@ -230,7 +277,12 @@ def build_quality_report(
         auc_m.update(outcome, scored_prob)
 
     return {
-        "signals": len(rows),
+        # Total ever emitted, counted without parsing. The outcome counts below
+        # describe the recent window the monitors actually see, which is a
+        # different thing — kept separate so neither is mistaken for the other.
+        "signals": signals_total,
+        "signals_in_window": len(rows),
+        "window_max_signals": max_signals,
         "rolling_auc": auc_m.value(),
         "auc_confirmed_outcomes": confirmed,
         "auc_unconfirmed_outcomes": unconfirmed,

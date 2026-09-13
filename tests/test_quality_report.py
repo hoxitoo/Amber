@@ -17,7 +17,16 @@ class TestQualityReport(unittest.TestCase):
             ]
             p.write_text("\n".join(rows) + "\n", encoding="utf-8")
             rep = build_quality_report(p)
-            self.assertEqual(rep["signals"], 2)
+
+            # `signals` counts lines, not decoded rows: the log grows without
+            # bound and parsing all of it for one displayed total was part of
+            # what made the dashboard take minutes. A truncated line — the only
+            # way a malformed one occurs, from a writer killed mid-write — still
+            # counts as a signal that was emitted.
+            self.assertEqual(rep["signals"], 3)
+            # What matters for robustness is unchanged: the bad row is skipped
+            # by everything that computes, so the window holds only valid rows.
+            self.assertEqual(rep["signals_in_window"], 2)
             self.assertIn("psi", rep)
 
 
