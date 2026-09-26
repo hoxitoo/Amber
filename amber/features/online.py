@@ -22,6 +22,9 @@ class SymbolWindow:
     buy_vol: deque[float] = field(default_factory=lambda: deque(maxlen=_MAXLEN))
     sell_vol: deque[float] = field(default_factory=lambda: deque(maxlen=_MAXLEN))
     trade_count: deque[float] = field(default_factory=lambda: deque(maxlen=_MAXLEN))
+    liq_long: deque[float] = field(default_factory=lambda: deque(maxlen=_MAXLEN))
+    liq_short: deque[float] = field(default_factory=lambda: deque(maxlen=_MAXLEN))
+    liq_count: deque[float] = field(default_factory=lambda: deque(maxlen=_MAXLEN))
 
 
 def _std(values: list[float]) -> float:
@@ -71,6 +74,9 @@ class FeatureEngine:
         w.buy_vol.append(float(row.get("buy_volume", 0.0)))
         w.sell_vol.append(float(row.get("sell_volume", 0.0)))
         w.trade_count.append(float(row.get("trade_count", 0.0)))
+        w.liq_long.append(float(row.get("liq_long_usd", 0.0) or 0.0))
+        w.liq_short.append(float(row.get("liq_short_usd", 0.0) or 0.0))
+        w.liq_count.append(float(row.get("liq_count", 0.0) or 0.0))
 
         return self._build_features(
             symbol=symbol,
@@ -161,6 +167,25 @@ class FeatureEngine:
         cvd_norm_20 = (net20 / tot20) if tot20 > 0 else 0.0
         trade_count_z_20 = _z(w.trade_count, 20)
 
+        # --- forced liquidations (cascade ignition) ---------------------------
+        # Normalised by traded notional over the same window: raw liquidated USD
+        # is not comparable between BTC and a small cap, the share of trading
+        # that was forced is. Summed over 5 bars because liquidations are
+        # sparse and bursty; a single minute is mostly zeros.
+        liq_longs = list(w.liq_long)
+        liq_shorts = list(w.liq_short)
+        liq_usd_5 = sum(liq_longs[-5:]) + sum(liq_shorts[-5:])
+        traded_usd_5 = sum(c * v for c, v in zip(closes[-5:], vols[-5:]))
+        liq_share_5 = (liq_usd_5 / traded_usd_5) if traded_usd_5 > 0 else 0.0
+        liq_count_5 = sum(list(w.liq_count)[-5:])
+        # +1: only shorts were liquidated (forced buying, a squeeze up);
+        # -1: only longs (forced selling, a flush down); 0 when none at all.
+        # Direction is not currently predicted (roadmap D10), but this is the
+        # first feature in the set that describes forced flow rather than
+        # voluntary flow, so it is kept for that revisit.
+        liq_s15, liq_l15 = sum(liq_shorts[-15:]), sum(liq_longs[-15:])
+        liq_imbalance_15 = ((liq_s15 - liq_l15) / (liq_s15 + liq_l15)) if (liq_s15 + liq_l15) > 0 else 0.0
+
         # --- microstructure --------------------------------------------------
         mid_price = (w.bid[-1] + w.ask[-1]) / 2.0 if w.bid and w.ask else cur
         spread_bps = 0.0 if mid_price == 0 else ((w.ask[-1] - w.bid[-1]) / mid_price) * 10_000
@@ -194,6 +219,10 @@ class FeatureEngine:
             "taker_imbalance": taker_imbalance,
             "cvd_norm_20": cvd_norm_20,
             "trade_count_z_20": trade_count_z_20,
+            # forced liquidations
+            "liq_share_5": liq_share_5,
+            "liq_count_5": liq_count_5,
+            "liq_imbalance_15": liq_imbalance_15,
             # microstructure / meta
             "mid_price": mid_price,
             "bid": w.bid[-1] if w.bid else mid_price,

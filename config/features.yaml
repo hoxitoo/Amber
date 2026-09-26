@@ -1,4 +1,4 @@
-version: v4
+version: v5
 features:
   # returns (short -> long context)
   - name: ret_1
@@ -26,5 +26,9 @@ features:
   - name: taker_imbalance
   - name: cvd_norm_20
   - name: trade_count_z_20
+  # forced liquidations (allLiquidation stream, v5)
+  - name: liq_share_5
+  - name: liq_count_5
+  - name: liq_imbalance_15
   # microstructure
   - name: spread_bps

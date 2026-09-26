@@ -52,4 +52,11 @@ class NormalizedRow(BaseModel):
     buy_volume: float = Field(default=0.0)
     sell_volume: float = Field(default=0.0)
     trade_count: int = Field(default=0)
+    # Forced liquidations for the candle's minute (from allLiquidation), in USD
+    # notional, split by the side of the POSITION closed. 0 both for a quiet
+    # minute and for rows collected before this stream existed — which is why a
+    # fresh deploy needs a full training window before these carry any signal.
+    liq_long_usd: float = Field(default=0.0)
+    liq_short_usd: float = Field(default=0.0)
+    liq_count: int = Field(default=0)
     is_synthetic: bool = Field(default=False)

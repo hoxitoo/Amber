@@ -20,6 +20,32 @@ FLUSH_INTERVAL_SEC = 1.0
 FLUSH_BATCH = 500
 
 
+# Bybit caps the subscribe `args` array at 21,000 characters per public
+# connection (v5 docs, "Connect"). Futures have no per-request args count limit.
+WS_ARGS_CHAR_LIMIT = 21_000
+
+
+def build_topics(symbols: list[str], bybit_cfg: dict) -> list[str]:
+    """Public stream topics to subscribe, in subscription order.
+
+    Klines drive the candle series; tickers carry bid/ask, open interest and
+    funding; publicTrade carries taker aggressor flow (CVD/imbalance) and is
+    high-volume — disable it via `collect_trades: false` if disk is tight.
+
+    Forced liquidations need no API key either. They are sparse — most minutes
+    carry none — so the disk cost is small next to publicTrade. A cascade is the
+    one event in this feed that can precede a move rather than describe it: the
+    first liquidations force market orders, which move price, which trigger the
+    next. At 27 symbols with all four streams the args run to 2,453 characters.
+    """
+    topics = [f"kline.1.{s}" for s in symbols] + [f"tickers.{s}" for s in symbols]
+    if bool(bybit_cfg.get("collect_trades", True)):
+        topics += [f"publicTrade.{s}" for s in symbols]
+    if bool(bybit_cfg.get("collect_liquidations", True)):
+        topics += [f"allLiquidation.{s}" for s in symbols]
+    return topics
+
+
 async def main() -> None:
     cfg = ConfigLoader(Path.cwd()).load_yaml("config/amber.yaml")
     setup_logging(cfg.get("run", {}).get("log_level", "INFO"))
@@ -28,14 +54,7 @@ async def main() -> None:
     ws_url = cfg["exchange"]["bybit"]["ws_url"]
     sink = ParquetSink(Path(cfg["storage"]["raw_dir"]))
 
-    # Klines drive the candle series; tickers carry bid/ask, open interest and
-    # funding rate; publicTrade carries taker aggressor flow (CVD/imbalance).
-    # publicTrade is high-volume — disable it via collect_trades: false if disk
-    # is tight (order-flow features then stay 0).
-    collect_trades = bool(cfg["exchange"]["bybit"].get("collect_trades", True))
-    topics = [f"kline.1.{s}" for s in symbols] + [f"tickers.{s}" for s in symbols]
-    if collect_trades:
-        topics += [f"publicTrade.{s}" for s in symbols]
+    topics = build_topics(symbols, cfg["exchange"]["bybit"])
 
     # Disk writes are batched off the WS read loop (audit A4): the handler only
     # enqueues, a writer task flushes by size/interval, so bursty markets can't

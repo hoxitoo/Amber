@@ -76,6 +76,11 @@ class BybitNormalizer:
             buy_volume=float(trades.get("buy", 0.0)) if trades else 0.0,
             sell_volume=float(trades.get("sell", 0.0)) if trades else 0.0,
             trade_count=int(trades.get("count", 0)) if trades else 0,
+            # .get with defaults: minute buckets persisted by a version that
+            # predates liquidations carry no liq_* keys at all.
+            liq_long_usd=float(trades.get("liq_long", 0.0)) if trades else 0.0,
+            liq_short_usd=float(trades.get("liq_short", 0.0)) if trades else 0.0,
+            liq_count=int(trades.get("liq_count", 0)) if trades else 0,
             is_synthetic=is_synthetic,
         )
 
@@ -103,6 +108,49 @@ class BybitNormalizer:
             except (KeyError, TypeError, ValueError):
                 continue
             out.append((symbol, ts, side, size))
+        return out
+
+    @staticmethod
+    def liquidations_from_ws(payload: dict) -> list[tuple[str, int, str, float]]:
+        """Parse a Bybit v5 `allLiquidation.*` payload into (symbol, ts, liquidated, usd).
+
+        `liquidated` is the side of the POSITION that was closed, 'long' or
+        'short'. Bybit encodes it in `S` with a convention that reads backwards
+        if taken at face value — per the v5 docs, "a `Buy` update indicates a
+        long position liquidation; `Sell` indicates a short position
+        liquidation" (https://bybit-exchange.github.io/docs/v5/websocket/public/all-liquidation).
+        Reading `Buy` as buying pressure would silently invert every feature
+        built on the split, and nothing downstream would flag it.
+
+        `usd` is size x bankruptcy price: raw size is in the base coin and is not
+        comparable across symbols, while notional is.
+        """
+        topic = str(payload.get("topic", ""))
+        if not topic.startswith("allLiquidation."):
+            return []
+        data = payload.get("data")
+        if not isinstance(data, list):
+            return []
+        out: list[tuple[str, int, str, float]] = []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            try:
+                symbol = str(item["s"])
+                ts = int(item["T"])
+                side = str(item["S"])
+                usd = float(item["v"]) * float(item["p"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if side == "Buy":
+                liquidated = "long"
+            elif side == "Sell":
+                liquidated = "short"
+            else:
+                continue  # an unknown side must not be guessed into either bucket
+            if usd <= 0:
+                continue
+            out.append((symbol, ts, liquidated, usd))
         return out
 
     @staticmethod

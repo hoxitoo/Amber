@@ -32,6 +32,11 @@ MODEL_FEATURES: list[str] = [
     "taker_imbalance",
     "cvd_norm_20",
     "trade_count_z_20",
+    # forced liquidations (the one feed that can lead a move rather than
+    # describe it: early liquidations force the orders that trigger later ones)
+    "liq_share_5",
+    "liq_count_5",
+    "liq_imbalance_15",
     # microstructure
     "spread_bps",
 ]

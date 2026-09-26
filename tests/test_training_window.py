@@ -12,15 +12,14 @@ import unittest
 from pathlib import Path
 
 from amber.datasets.build import build_dataset
+from amber.models.features import MODEL_FEATURES
 from amber.models.train import _apply_clip, _clip_bounds
 
 SYMBOL = "BTCUSDT"
-FEATURES = (
-    "ret_1", "ret_5", "ret_20", "ret_60", "vol_z_20", "vol_ratio_20", "vol_accel",
-    "oi_z_20", "oi_roc_5", "funding_z_20", "squeeze_ratio", "bb_width_20", "range_atr_14",
-    "dist_to_high_20", "dist_to_low_20", "breakout_up_20", "breakout_dn_20",
-    "taker_imbalance", "cvd_norm_20", "trade_count_z_20", "spread_bps",
-)
+# The live list, not a copy: a hand-maintained duplicate went stale the moment
+# the liquidation features were added, and `_clip_bounds` indexes rows by
+# position in MODEL_FEATURES, so a short fixture row raised IndexError.
+FEATURES = tuple(MODEL_FEATURES)
 
 
 def _write_features(root: Path, candles: int) -> None:

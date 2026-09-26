@@ -12,6 +12,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from amber.features.spec import FEATURE_SPEC_VERSION
 from amber.features.compute import compute_batch_features
 
 
@@ -108,7 +109,7 @@ class TestIncrementalEqualsFull(unittest.TestCase):
 
             compute_batch_features(root / "raw", root / "features", ["BTCUSDT"])
             self.assertEqual(len(_features(root).splitlines()), 300)
-            self.assertEqual(json.loads(meta.read_text())["spec_version"], "v4")
+            self.assertEqual(json.loads(meta.read_text())["spec_version"], FEATURE_SPEC_VERSION)
 
     def test_truncated_feature_file_falls_back_to_full_recompute(self):
         with tempfile.TemporaryDirectory() as td:

@@ -23,6 +23,10 @@ exchange:
     ws_url: wss://stream.bybit.com/v5/public/linear
     rest_url: https://api.bybit.com
     backfill_limit: 1000   # REST klines per symbol per backfill (Bybit max 1000 ≈ 16h of 1m history)
+    # Public streams only — Amber holds no API key and needs none. Trade flow and
+    # forced liquidations both come from the public linear socket above.
+    collect_trades: true
+    collect_liquidations: true
     symbols:
     - BTCUSDT
     - ETHUSDT

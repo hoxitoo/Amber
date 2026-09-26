@@ -21,6 +21,23 @@ TRADE_BUCKETS_STATE_KEY = "trade_buckets"
 _MINUTE_MS = 60_000
 _BUCKET_PRUNE_MS = 30 * _MINUTE_MS  # drop trade buckets older than this vs the newest seen
 
+_BUCKET_KEYS = ("buy", "sell", "count", "liq_long", "liq_short", "liq_count")
+
+
+def _new_bucket() -> dict[str, float]:
+    return dict.fromkeys(_BUCKET_KEYS, 0.0)
+
+
+def _add(bucket: dict[str, float], key: str, amount: float) -> None:
+    """Accumulate without assuming the key exists.
+
+    Buckets are persisted between runs, so the first run after a deploy reads
+    buckets written by the previous version — which have no liq_* keys. Plain
+    `bucket[key] += amount` would raise KeyError on the live box on the first
+    liquidation that lands in a minute already opened by a trade.
+    """
+    bucket[key] = bucket.get(key, 0.0) + amount
+
 
 def _iter_jsonl_payloads(path: Path):
     with path.open("r", encoding="utf-8") as fh:
@@ -114,9 +131,22 @@ def normalize_ws_raw(raw_root: Path, state: StateStore) -> int:
                     for tsym, tts, side, size in trades:
                         minute = (tts // _MINUTE_MS) * _MINUTE_MS
                         newest_minute = max(newest_minute, minute)
-                        bucket = trade_buckets.setdefault(f"{tsym}|{minute}", {"buy": 0.0, "sell": 0.0, "count": 0.0})
-                        bucket["buy" if side == "Buy" else "sell"] += size
-                        bucket["count"] += 1.0
+                        bucket = trade_buckets.setdefault(f"{tsym}|{minute}", _new_bucket())
+                        _add(bucket, "buy" if side == "Buy" else "sell", size)
+                        _add(bucket, "count", 1.0)
+                    continue
+                # Liquidations share the trade bucket for their minute, so they
+                # inherit its persistence across runs, its pruning, and its
+                # restore-on-failed-write — rather than a second mechanism that
+                # would have to get all three right independently.
+                liquidations = normalizer.liquidations_from_ws(payload)
+                if liquidations:
+                    for lsym, lts, liquidated, usd in liquidations:
+                        minute = (lts // _MINUTE_MS) * _MINUTE_MS
+                        newest_minute = max(newest_minute, minute)
+                        bucket = trade_buckets.setdefault(f"{lsym}|{minute}", _new_bucket())
+                        _add(bucket, "liq_long" if liquidated == "long" else "liq_short", usd)
+                        _add(bucket, "liq_count", 1.0)
                     continue
                 for candle in normalizer.candles_from_ws(payload):
                     seen_ts = max(int(last_ts.get(symbol, -1)), int(pending_last_ts.get(symbol, -1)))

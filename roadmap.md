@@ -225,6 +225,24 @@ a known inaccuracy or dead end, not a feature wish.
       *Remaining:* run it on the live box; the verdict decides whether D2/D7 are
       the work or whether the model is.
 
+- [~] **D2a — Forced liquidations. `COLLECTING — evaluate after 48h`**
+      The cheapest of the leading inputs to test first: sparse (small disk
+      cost), public (no API key — Amber holds none and needs none), and the one
+      event in the feed that can precede a move rather than describe it. A
+      cascade's first liquidations force the market orders that trigger the
+      next.
+      Subscribed via `allLiquidation.{symbol}`; three features in spec v5:
+      `liq_share_5` (liquidated USD / traded USD over 5 bars — comparable across
+      symbols where raw size is not), `liq_count_5`, and `liq_imbalance_15`.
+      Bybit's `S` names the side of the POSITION closed, so `Buy` means a long
+      was liquidated; that is pinned against the documentation's own example,
+      because reading it as buying pressure inverts every feature on the split.
+      *Do not evaluate early.* Collection starts at deploy, but the training
+      window is 48h: until it has rolled over, most rows in it pre-date the
+      stream and carry zeros meaning "not collected", indistinguishable from
+      "none happened". Judge after 48h with `run_baseline_check.py` — the test
+      is whether overlap with `range_atr_14` falls, not whether precision rises.
+
 - [ ] **D2 — "Early stage" is unreachable on 1m bars.**
       By the time a 1-minute candle closes and `range_atr_14` registers a spike,
       the move is a minute old — mid-move, not early, on a venue where bots act
