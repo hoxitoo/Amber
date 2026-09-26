@@ -141,9 +141,9 @@ class TestOverlapArithmetic(unittest.TestCase):
         from amber.backtest.baselines import _verdict
 
         report = {
-            "model": {"precision": 0.9},
-            "baselines": [{"name": "range_atr_14", "status": "ok",
-                           "overlap_with_model": 0.95, "precision": 0.88}],
+            "model": {"precision": 0.9, "lift": 9.0, "lift_ci_low_clustered": 6.0},
+            "baselines": [{"name": "range_atr_14", "status": "ok", "overlap_with_model": 0.95,
+                           "precision": 0.88, "lift": 8.8, "lift_ci_low_clustered": 5.0}],
         }
         self.assertEqual(_verdict(report), "tautology:range_atr_14")
 
@@ -151,19 +151,68 @@ class TestOverlapArithmetic(unittest.TestCase):
         from amber.backtest.baselines import _verdict
 
         report = {
-            "model": {"precision": 0.80},
-            "baselines": [{"name": "bb_width_20", "status": "ok",
-                           "overlap_with_model": 0.20, "precision": 0.82}],
+            "model": {"precision": 0.80, "lift": 8.0, "lift_ci_low_clustered": 5.0},
+            "baselines": [{"name": "bb_width_20", "status": "ok", "overlap_with_model": 0.20,
+                           "precision": 0.82, "lift": 8.2, "lift_ci_low_clustered": 5.5}],
         }
         self.assertEqual(_verdict(report), "matched_by:bb_width_20")
+
+    def test_a_one_alert_margin_is_not_an_advantage(self):
+        """The live run of 2026-09-26, verbatim.
+
+        The model scored 1.000 against range_atr_14 at 0.990 — one alert in 103 —
+        and the first version of this rule called that `model_adds_signal`. Its
+        own clustered lower bound was 5.67, below the rule's achieved lift of
+        9.63, and spread_bps had the better bound at 6.18. A margin no statistics
+        supports is not an advantage.
+        """
+        from amber.backtest.baselines import _verdict
+
+        report = {
+            "model": {"precision": 1.000, "lift": 9.73, "lift_ci_low_clustered": 5.67},
+            "baselines": [
+                {"name": "range_atr_14", "status": "ok", "overlap_with_model": 0.63,
+                 "precision": 0.990, "lift": 9.63, "lift_ci_low_clustered": 4.00},
+                {"name": "bb_width_20", "status": "ok", "overlap_with_model": 0.68,
+                 "precision": 0.990, "lift": 9.63, "lift_ci_low_clustered": 4.00},
+                {"name": "spread_bps", "status": "ok", "overlap_with_model": 0.64,
+                 "precision": 0.961, "lift": 9.35, "lift_ci_low_clustered": 6.18},
+            ],
+        }
+        verdict = _verdict(report)
+
+        self.assertNotEqual(verdict, "model_adds_signal")
+        self.assertTrue(verdict.startswith("indistinguishable_from:"), verdict)
+
+    def test_majority_overlap_is_called_out_even_below_the_tautology_line(self):
+        from amber.backtest.baselines import format_report
+
+        report = {
+            "status": "ok", "target": "move", "base_rate": 0.1028, "rows": 19629,
+            "span_days": 0.26, "alerts_per_day": 400.0,
+            "model": {"alerts": 103, "precision": 1.0, "lift": 9.73,
+                      "lift_ci_low_clustered": 5.67, "episodes": 8},
+            "baselines": [
+                {"name": "range_atr_14", "status": "ok", "overlap_with_model": 0.63,
+                 "precision": 0.990, "lift": 9.63, "lift_ci_low_clustered": 4.00,
+                 "episodes": 4, "spearman_with_model": 0.15},
+            ],
+            "random": {"precision": 0.078, "lift": 0.76, "lift_ci_low_clustered": 0.07,
+                       "episodes": 18},
+            "verdict": "indistinguishable_from:range_atr_14",
+        }
+        text = format_report(report)
+
+        self.assertIn("63%", text)
+        self.assertIn("не независимый инструмент", text)
 
     def test_verdict_credits_a_model_that_wins_and_differs(self):
         from amber.backtest.baselines import _verdict
 
         report = {
-            "model": {"precision": 0.90},
-            "baselines": [{"name": "bb_width_20", "status": "ok",
-                           "overlap_with_model": 0.20, "precision": 0.60}],
+            "model": {"precision": 0.90, "lift": 9.0, "lift_ci_low_clustered": 7.0},
+            "baselines": [{"name": "bb_width_20", "status": "ok", "overlap_with_model": 0.20,
+                           "precision": 0.60, "lift": 6.0, "lift_ci_low_clustered": 4.0}],
         }
         self.assertEqual(_verdict(report), "model_adds_signal")
 

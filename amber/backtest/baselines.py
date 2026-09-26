@@ -229,19 +229,36 @@ def compare_to_baselines(
 
 
 def _verdict(report: dict[str, Any]) -> str:
+    """What the comparison supports, not what it happens to show.
+
+    The first version returned `model_adds_signal` whenever the model's point
+    precision exceeded every rule's. On the live run that declared victory on a
+    difference of ONE alert in 103 — model 1.000 against range_atr_14 0.990 —
+    while the model's own clustered lower bound (5.67) sat well below the rule's
+    point lift (9.63), and `spread_bps` actually had the *better* bound. A margin
+    no statistics supports is not an advantage, and the tool exists precisely to
+    stop the project acting on that kind of number.
+    """
     ok = [b for b in report["baselines"] if b.get("status") == "ok"]
     if not ok:
         return "no_baselines"
-    model_p = report["model"]["precision"] or 0.0
 
     twin = max(ok, key=lambda b: b.get("overlap_with_model") or 0.0)
     if (twin.get("overlap_with_model") or 0.0) >= TAUTOLOGY_OVERLAP:
         return f"tautology:{twin['name']}"
 
+    model = report["model"]
     strongest = max(ok, key=lambda b: b.get("precision") or 0.0)
-    if (strongest.get("precision") or 0.0) >= model_p:
+    model_low = model.get("lift_ci_low_clustered") or 0.0
+    best_lift = strongest.get("lift") or 0.0
+
+    # The model only "adds" something if what the data supports for it clears
+    # what the rule actually achieved.
+    if model_low > best_lift:
+        return "model_adds_signal"
+    if (strongest.get("precision") or 0.0) >= (model.get("precision") or 0.0):
         return f"matched_by:{strongest['name']}"
-    return "model_adds_signal"
+    return f"indistinguishable_from:{strongest['name']}"
 
 
 def format_report(report: dict[str, Any]) -> str:
@@ -298,10 +315,26 @@ def format_report(report: dict[str, Any]) -> str:
             f"Множества алертов различаются, но точность у «{feature}» не ниже. "
             "Модель не проигрывает, но и не окупает свою сложность на этих данных."
         )
+    elif verdict.startswith("indistinguishable_from:"):
+        feature = verdict.split(":", 1)[1]
+        lines.append(
+            f"Модель показала точность чуть выше, чем «{feature}», но её собственная "
+            "нижняя граница ниже того, чего правило фактически достигло — разница "
+            "статистикой не подтверждена. Считать это превосходством нельзя."
+        )
     elif verdict == "model_adds_signal":
         lines.append(
-            "Модель обходит каждое однофичевое правило и выбирает другие строки — "
-            "она добавляет что-то поверх «уже трясёт». Это то, что можно развивать."
+            "Модель обходит каждое однофичевое правило с запасом, переживающим поправку "
+            "на слипание, и выбирает другие строки. Это то, что можно развивать."
+        )
+
+    majority = [b for b in report["baselines"]
+                if b.get("status") == "ok" and (b.get("overlap_with_model") or 0) >= 0.5]
+    if majority and not verdict.startswith("tautology:"):
+        names = ", ".join(f"{b['name']} ({b['overlap_with_model']:.0%})" for b in majority)
+        lines.append(
+            f"Отдельно: большинство алертов модели выбирают и простые правила — {names}. "
+            "Ниже порога тавтологии, но это не независимый инструмент."
         )
     lines.append(
         "Главная колонка — совпадение с моделью: она не зависит от исходов, поэтому "
