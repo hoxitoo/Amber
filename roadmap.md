@@ -207,6 +207,24 @@ a known inaccuracy or dead end, not a feature wish.
       (D2/D7 — which are not worth buying for direction on today's evidence, but
       would change it if acquired for other reasons).
 
+- [x] **D11 — Is the model a model, or a rebadged indicator? `TOOL BUILT`**
+      `range_atr_14` reached **85%** of permutation importance (was 32%) and live
+      signals fire at `range_atr_14=+4.2` — when volatility is already four sigma
+      high. "Price is moving violently right now" predicting "price moves 1% in
+      the next 15 minutes" is close to a tautology, and precision 0.98 would then
+      be a statement about how easy the question became.
+      `scripts/run_baseline_check.py` ranks the same rows by one raw feature,
+      alerts on the same count, and reports how many of the model's alerts the
+      trivial rule also picks. **Overlap is the headline, not precision:** it
+      uses no outcomes, so a 7-episode test segment does not weaken it. Each rule
+      is credited with its better direction so the model is not flattered.
+      Rank correlation is reported but carries no verdict — measured 0.05 on a
+      fixture where one feature drove the label and overlap was 77%, because the
+      two agree on which rows are extreme and differ on the ordering within the
+      tail.
+      *Remaining:* run it on the live box; the verdict decides whether D2/D7 are
+      the work or whether the model is.
+
 - [ ] **D2 — "Early stage" is unreachable on 1m bars.**
       By the time a 1-minute candle closes and `range_atr_14` registers a spike,
       the move is a minute old — mid-move, not early, on a venue where bots act
