@@ -423,6 +423,8 @@ def run_sweep(
     floor: float = 0.005,
     cap: float = 0.05,
     target: str = "pump",
+    train_frac: float = 0.7,
+    calib_frac: float = 0.15,
 ) -> dict[str, Any]:
     series = load_series(
         features_root,
@@ -444,7 +446,10 @@ def run_sweep(
                 rows = build_arm_rows(
                     series, horizon=horizon, ruler=ruler, shape=shape, k=k, floor=floor, cap=cap
                 )
-                res = evaluate_arm(rows, budget=budget, target=target, z=z, horizon=horizon)
+                res = evaluate_arm(
+                    rows, budget=budget, target=target, z=z, horizon=horizon,
+                    train_frac=train_frac, calib_frac=calib_frac,
+                )
                 res.update({"horizon": horizon, "ruler": ruler, "shape": shape})
                 # Average realised barrier: a ruler is only interpretable next to
                 # the move size it actually asks for. `floored_pct` says how

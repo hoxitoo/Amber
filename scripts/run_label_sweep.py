@@ -75,6 +75,8 @@ def main() -> int:
         max_candles_per_symbol=int(
             args.max_candles if args.max_candles is not None else labeling.get("max_candles_per_symbol", 2880)
         ),
+        train_frac=float(config.get("model", {}).get("split", {}).get("train_frac", 0.7)),
+        calib_frac=float(config.get("model", {}).get("split", {}).get("calib_frac", 0.15)),
         min_warmup_bars=int(labeling.get("min_warmup_bars", 60)),
         k=float(labeling.get("threshold_k", 0.8)),
         floor=float(labeling.get("threshold_floor", 0.005)),

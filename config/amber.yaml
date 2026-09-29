@@ -137,9 +137,24 @@ labeling:
   # Rolling training window: candles per symbol that enter the dataset (0 = all
   # history). Dataset rows ≈ symbols × this × len(horizon_steps_list), and the
   # dataset is materialised in memory several times per retrain, so this is what
-  # bounds RAM. 2880 (~2 days) × 27 symbols × 3 horizons ≈ 230k rows, which is
-  # what the model was already training on. Raise it only with RAM to spare.
-  max_candles_per_symbol: 2880
+  # bounds RAM.
+  #
+  # 4320 (72h) since 2026-09-29, up from 2880 (48h). All symbols share one time
+  # axis, so episodes come from the test segment's wall-clock length, not from
+  # row count: 48h × 15% test = 7.2h gave 8 episodes live, under the 10 every
+  # verdict requires. 72h × 25% test = 18h → ~20 episodes at the observed rate
+  # (an estimate; the baseline check reports the real count).
+  #
+  # Cost, measured on a synthetic 27-symbol retrain (scratch benchmark, not the
+  # live box): 48h 154k rows, 1.1 min, peak RSS 1.56 GB; 72h 232k rows, 1.8 min,
+  # peak RSS 2.24 GB. 232k is also the size the live box already trained on
+  # before h=60 was dropped (2880 × 27 × 3). tests/test_episode_budget.py
+  # holds both limits.
+  #
+  # Liquidation features read 0 for bars before collection began, which is
+  # indistinguishable from "no liquidations". Do not deploy a window longer
+  # than the liquidation history on disk.
+  max_candles_per_symbol: 4320
 
 model:
   cv:
@@ -147,7 +162,10 @@ model:
     val_size: 50
     gap_candles: 30
   split:
-    train_frac: 0.7
+    # 60/15/25: the test segment is where every verdict's episodes come from
+    # (see max_candles_per_symbol). With the 72h window training still gets
+    # 43h, more than the 34h (70% of 48h) it had before.
+    train_frac: 0.6
     calib_frac: 0.15
   calibration:
     holdout_ratio: 0.2
