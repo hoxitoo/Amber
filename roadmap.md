@@ -1,6 +1,6 @@
 # Project Amber — Roadmap
 
-_Last updated: 2026-08-26_
+_Last updated: 2026-09-29_
 
 Amber is a local-first ML scanner for Bybit futures that predicts event
 probabilities (pump/dump) and emits alerts. Not an auto-trader.
@@ -224,8 +224,11 @@ a known inaccuracy or dead end, not a feature wish.
       tail.
       *Remaining:* run it on the live box; the verdict decides whether D2/D7 are
       the work or whether the model is.
+      *Live, 2026-09-26:* overlap 63%, precision 1.000 vs 0.990 — matched by
+      `range_atr_14`. *2026-09-29, after 48h of liquidations:* overlap 28%,
+      0.922 vs 0.971, 8 episodes — still matched, and underpowered.
 
-- [~] **D2a — Forced liquidations. `COLLECTING — evaluate after 48h`**
+- [~] **D2a — Forced liquidations. `COLLECTING — 48h result in, re-evaluate at the 72h window`**
       The cheapest of the leading inputs to test first: sparse (small disk
       cost), public (no API key — Amber holds none and needs none), and the one
       event in the feed that can precede a move rather than describe it. A
@@ -242,6 +245,10 @@ a known inaccuracy or dead end, not a feature wish.
       stream and carry zeros meaning "not collected", indistinguishable from
       "none happened". Judge after 48h with `run_baseline_check.py` — the test
       is whether overlap with `range_atr_14` falls, not whether precision rises.
+      *2026-09-29:* overlap fell 63% → 28%, so the model now ranks on something
+      besides ATR — but whether that is liquidations is not yet measured
+      (importance ran on the pump head until 3ff3415). Re-run with the 72h
+      window (efdf724) once liquidation history on the box covers it.
 
 - [ ] **D2 — "Early stage" is unreachable on 1m bars.**
       By the time a 1-minute candle closes and `range_atr_14` registers a spike,
@@ -306,6 +313,16 @@ a known inaccuracy or dead end, not a feature wish.
       Costs roughly 12 s per pipeline cycle today and is the CPU ceiling that
       caps the universe near 100 symbols. Prerequisite for any expansion beyond
       the current 27.
+
+### Sprint 6 — forward ledger and profit test · **proposed 2026-09-29**
+
+Every live evaluation so far lives in the test segment of a rolling window
+(7h, 18h from efdf724), so it can never accumulate evidence. The forward ledger
+can: every live alert scored after its horizon and kept, with the net result of
+mechanical rules fixed in advance (momentum / fade, TP = SL = 1%, 15-bar
+timeout, 0.09% fees), next to the same ledger for `range_atr_14`. Freeze the
+code while it fills; decide at ≥30 episodes. Supersedes S4.2. Full plan:
+`CLAUDE.md` section 11.
 
 ### Backlog
 - [ ] T6 cross-exchange lead/lag features · A7 feature-list relocation.

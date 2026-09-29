@@ -7,6 +7,12 @@ owner. The incident is named so the rule is not mistaken for general advice.
 The owner runs this 24/7 and acts on what I report. A confident wrong answer is
 worse than "I don't know yet".
 
+Two halves: **rules** (sections 0–7) and **context that exists nowhere else in
+the repo** (sections 8–11: the owner, the box, what has been measured live, and
+the plan). Sessions start from a fresh container with no memory of earlier
+chats; sections 8–11 are that memory. **Update section 10 at the end of every
+session** — a result that lives only in chat is lost.
+
 ## 0. Before touching anything
 
 - `git fetch origin && git status && git log --oneline -1 origin/main`.
@@ -131,6 +137,96 @@ The owner runs them verbatim on the VPS as root.
 - Decision tools: `scripts/run_label_sweep.py`, `run_label_decomposition.py`,
   `run_operating_curve.py`, `run_baseline_check.py`. All read-only.
 - As of 2026-09-29 the move model is statistically indistinguishable from the
-  one-feature rule `range_atr_14` (baseline check). Everything available on 1m
+  one-feature rule `range_atr_14` (baseline check; details in section 10). Everything available on 1m
   bars says "a move is already under way"; see roadmap D2/D11.
 - `docs/target_review_2026-09.md` holds the reasoning behind the current target.
+
+## 8. The owner
+
+- Writes in Russian; answer in Russian. Code, comments, commits and docs stay
+  in English, as the repo already is.
+- Does not read the code. Runs my commands verbatim as root on the VPS and
+  pastes the output back. Every round trip costs them hours to days, because
+  most results need a training window to fill first. So: one message with
+  everything needed, never a drip of follow-up questions.
+- Goal, in their words: catch volatility at its earliest stage and determine
+  direction; precision is the main criterion. What they actually want to know
+  is **whether acting on Amber's alerts makes money** ("выходить на прод,
+  чтобы тестировать на успешность модель", 2026-09).
+- 2026-09-29, verbatim concern: we keep finding and fixing errors instead of
+  getting closer to testing the model for profit. That is fair. Every session
+  must advance section 11 or say plainly why it could not. A fix that changes
+  no number section 11 depends on goes to the backlog, not into the session.
+- Once offered a Bybit API key; declined (rule 7).
+- The VPS deploys from `main`, and all work is pushed to `main`. A harness may
+  assign a `claude/...` branch; the owner never pulls those.
+
+## 9. The box
+
+- VPS, repo at `/opt/amber`, owned by user `amber`, venv `/opt/amber/.venv`,
+  data under `/opt/amber/data/` (paths in `config/amber.yaml` are relative).
+- 3.9 GB RAM, 59 GB disk. systemd services: `amber-ws-collector`,
+  `amber-pipeline` (normalise → features → hourly dataset + retrain, see
+  `pipeline.retrain_min`), `amber-scanner`, `amber-dashboard`.
+- Logs: `journalctl -u amber-pipeline -n 200 --no-pager`. Memory during a
+  retrain: `free -m`, `systemctl status amber-pipeline | grep -i memory`.
+- Measured on the box 2026-09-26, after the liquidation deploy: 585 MB used
+  in total at rest, disk 27%, spec-v5 feature recompute peak 174 MB.
+- The retrain is the largest memory consumer. At the 72h window it peaked at
+  2.24 GB **in a synthetic benchmark here**, not yet observed on the box.
+
+## 10. Live results log — measured on the box, newest last
+
+Update this at the end of every session. Date, what ran, the number, the
+episode count, and what it does and does not show.
+
+- **2026-09-06** — label sweep adopted `move`: fixed 1.0%, one-sided,
+  h=15 (`docs/target_review_2026-09.md`). D1: direction precision 0.590 vs
+  base 0.587, i.e. no directional skill → the product became a volatility
+  scanner; direction is the human's call.
+- **2026-09-08** — D4 operating curve → `prob_lift_min: 9.55`
+  (`config/thresholds.yaml`, commit 7b6636a).
+- **2026-09-26** — D11 first live run: model precision 1.000 vs
+  `range_atr_14` 0.990, alert overlap 63%. I first reported
+  `model_adds_signal` on a one-alert margin — wrong; the corrected verdict is
+  "matched by range_atr_14". Same day: liquidation collection deployed
+  (e138980, 61c15ec); verified 4 subscribe acks ok, all 27 symbols on spec v5.
+- **2026-09-29** — D11 after 48h of liquidations: overlap with `range_atr_14`
+  fell **63% → 28%**; precision model 0.922 vs `range_atr_14` 0.971;
+  **8 episodes** (under MIN_EPISODES 10 → underpowered). Verdict
+  `matched_by:range_atr_14`. The overlap drop says the model now ranks alerts
+  by something other than ATR; whether that is liquidations is **not
+  measured** — importance was computed on the pump head until 3ff3415.
+- **2026-09-29** — pushed, **not yet deployed**: window 48h → 72h, split
+  60/15/25 (efdf724), ~20 test episodes expected (inferred). Deploy only once
+  liquidation history on the box is ≥72h (section 3: pre-collection rows read
+  as "no liquidations"). Awaiting from the owner: `run_baseline_check.py`
+  output and the move-head importance table from the first retrain after.
+
+## 11. The plan to a profit test
+
+Proposed 2026-09-29. Why we have been circling: the only out-of-sample data is
+the test segment of a rolling window — 7h, soon 18h — so every result is
+underpowered, every run ends in "wait for more data", and the wait gets filled
+with fixes. A rolling window can never accumulate evidence. What can:
+
+**A forward ledger.** Every live alert, scored after its horizon and kept
+forever. It is out-of-sample by construction, grows every day, and is the only
+thing that can say whether acting on alerts makes money.
+
+- **A. More test episodes** — done (efdf724), awaiting deploy.
+- **B. Build the forward ledger** (roadmap S4.2, extended). Per alert: ts,
+  symbol, calibrated prob, `model_run_id`, did |move| ≥1% happen within 15
+  bars, first-touch direction, and the net result (fees 0.09% round trip, TP =
+  SL = 1%, timeout 15 bars) of rules **fixed before any data is seen**:
+  *momentum* (trade the direction of the alert bar) and *fade* (the opposite).
+  Same ledger for the `range_atr_14` rule at the same alert rate, so the model
+  is always judged against the indicator. Shown on the dashboard.
+- **C. Freeze** code, features, labels and thresholds while the ledger fills.
+  Hourly retraining continues (it is part of the system); `model_run_id`
+  records which weights fired. Only bugs that change ledger numbers get fixed.
+- **D. Decide** at ≥30 independent episodes (rule 2 bounds, family-wise over
+  the rules compared): if a rule's net result has a lower bound above 0, the
+  owner may test it with small size by hand — Amber still never places orders.
+  If nothing clears it, say so plainly; the next options are roadmap D2
+  (sub-minute data) or accepting Amber as a volatility indicator.
