@@ -89,7 +89,12 @@ def permutation_importance(
     """Drop in PR-AUC when each feature is shuffled, averaged over `n_repeats`."""
     if not rows:
         return {"status": "no_rows"}
-    y = [int(r.get(label_key, 0)) for r in rows]
+    if label_key == "move_hit":
+        from amber.labeling.events import move_label
+
+        y = [move_label(r) for r in rows]  # derived for datasets that predate the column
+    else:
+        y = [int(r.get(label_key, 0)) for r in rows]
     if len(set(y)) < 2:
         return {"status": "single_class"}
 

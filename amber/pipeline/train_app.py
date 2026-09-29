@@ -145,7 +145,14 @@ def run_training(
         trained = load_latest_model(models_root)
         oos = split_rows(ordered, pts, trained["splits"])["test"] if trained.get("splits") else ordered
         if oos:
-            imp = permutation_importance(trained, oos, target="pump", label_key="up_hit")
+            # Measure the head the scanner gates on. Until 2026-09-29 this was
+            # hard-wired to `pump`, three weeks after `move` became the primary
+            # target — so the importance table on the dashboard described a
+            # head that decides nothing, and could not answer whether the move
+            # model uses the liquidation features at all.
+            heads = trained.get("heads", {}) if isinstance(trained.get("heads"), dict) else {}
+            target, label_key = ("move", "move_hit") if "move" in heads else ("pump", "up_hit")
+            imp = permutation_importance(trained, oos, target=target, label_key=label_key)
             imp["correlated_pairs"] = correlated_pairs(oos[:5000])
             (logs_root).mkdir(parents=True, exist_ok=True)
             (logs_root / "feature_importance.json").write_text(

@@ -149,6 +149,16 @@ class TestPipelineEndToEnd(unittest.TestCase):
     def test_the_model_finds_the_planted_edge(self):
         self.assertGreater(self.result["eval"].get("pr_auc_move_lift", 0.0), 1.2)
 
+    def test_importance_is_measured_on_the_gating_head(self):
+        """It was hard-wired to `pump` for three weeks after `move` became the
+        primary target, so the dashboard table described a head that decides
+        nothing."""
+        imp = json.loads((self.logs / "feature_importance.json").read_text(encoding="utf-8"))
+        self.assertEqual(imp.get("target"), "move", imp.get("status"))
+        self.assertEqual(imp.get("status"), "ok")
+        names = {s["feature"] for s in imp["scores"]}
+        self.assertTrue({"liq_share_5", "liq_count_5", "liq_imbalance_15"} <= names)
+
     def test_thresholds_are_actually_found(self):
         """A silent {} here is what makes every panel read 0."""
         self.assertTrue(self.thresholds, "config/thresholds.yaml was not located")
