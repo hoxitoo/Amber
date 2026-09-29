@@ -320,3 +320,16 @@ def load_calibration_health(logs_dir: str) -> dict[str, Any] | None:
         return load_health(Path(logs_dir))
     except Exception:
         return None
+
+
+def ledger_summary(logs_dir: str | Path) -> dict | None:
+    """Forward-ledger summary, or None before the first alert is scored."""
+    from amber.monitoring.ledger import LEDGER_FILE, summarize_ledger
+
+    logs = Path(logs_dir)
+    if not (logs / LEDGER_FILE).exists():
+        return None
+    try:
+        return summarize_ledger(logs)
+    except Exception:
+        return None

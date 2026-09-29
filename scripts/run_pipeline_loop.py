@@ -144,6 +144,31 @@ def _recalibrate(config: dict) -> None:
         logger.info("calibration still healthy (worst ECE %.4f)", worst)
 
 
+def _update_ledger(config: dict) -> None:
+    """Score every alert whose horizon has elapsed (CLAUDE.md section 11).
+
+    Runs right after normalisation, when the newest candles are on disk. Cheap:
+    it reads only the tail of the candle files for symbols with a pending alert.
+    """
+    from amber.monitoring.ledger import update_ledger
+
+    storage = config["storage"]
+    led = config.get("ledger", {}) if isinstance(config.get("ledger"), dict) else {}
+    try:
+        n = update_ledger(
+            Path(storage["logs_dir"]),
+            Path(storage["raw_dir"]),
+            StateStore(Path(storage["state_dir"])),
+            lag_bars=int(led.get("lag_bars", 1)),
+            cost=float(led.get("cost", 0.0009)),
+            expire_hours=float(led.get("expire_hours", 6)),
+        )
+        if n:
+            logger.info("ledger: scored %s alerts", n)
+    except Exception as exc:  # bookkeeping must never stop the pipeline
+        logger.error("ledger update failed: %s", exc)
+
+
 def main() -> None:
     cfg = ConfigLoader(Path.cwd()).load_yaml("config/amber.yaml")
     setup_logging(cfg.get("run", {}).get("log_level", "INFO"))
@@ -187,6 +212,8 @@ def main() -> None:
                 fn()
             except Exception as exc:  # keep the loop alive across transient errors
                 logger.error("pipeline stage %s failed: %s", stage, exc)
+
+        _update_ledger(cfg)
 
         now = time.time()
         if retrain_min > 0 and (now - last_retrain) >= retrain_min * 60:

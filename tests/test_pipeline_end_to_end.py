@@ -159,6 +159,23 @@ class TestPipelineEndToEnd(unittest.TestCase):
         names = {s["feature"] for s in imp["scores"]}
         self.assertTrue({"liq_share_5", "liq_count_5", "liq_imbalance_15"} <= names)
 
+    def test_retrain_publishes_the_shadow_rule_at_the_models_rate(self):
+        """The forward ledger's comparison rule is refit on every retrain."""
+        rule = json.loads((self.logs / "shadow_rule.json").read_text(encoding="utf-8"))
+        ev = self.result["eval"]
+        self.assertAlmostEqual(rule["alert_fraction"], ev["n_predicted_move"] / ev["rows"])
+        self.assertIsNotNone(rule["threshold"])
+        self.assertEqual(rule["model_run_id"], self.result["train"]["run_id"])
+
+    def test_signals_name_the_weights_that_fired_them(self):
+        from amber.models.infer import load_latest_model
+        from amber.signals.scorer import score_signal
+
+        model = load_latest_model(self.models)
+        self.assertEqual(model.get("run_id"), self.result["train"]["run_id"])
+        sig = score_signal(self.rows[-1], models_root=self.models, config_version="v1", model=model)
+        self.assertEqual(sig.market_context["model_run_id"], self.result["train"]["run_id"])
+
     def test_thresholds_are_actually_found(self):
         """A silent {} here is what makes every panel read 0."""
         self.assertTrue(self.thresholds, "config/thresholds.yaml was not located")

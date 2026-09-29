@@ -135,7 +135,8 @@ The owner runs them verbatim on the VPS as root.
 - Primary target: `move` — |price| reaches a fixed 1.0% within 15 bars,
   one-sided labels. Pump/dump heads are kept only for the D10 revisit.
 - Decision tools: `scripts/run_label_sweep.py`, `run_label_decomposition.py`,
-  `run_operating_curve.py`, `run_baseline_check.py`. All read-only.
+  `run_operating_curve.py`, `run_baseline_check.py`, `run_ledger_report.py`.
+  All read-only. The ledger report is the one that answers "does it pay".
 - As of 2026-09-29 the move model is statistically indistinguishable from the
   one-feature rule `range_atr_14` (baseline check; details in section 10). Everything available on 1m
   bars says "a move is already under way"; see roadmap D2/D11.
@@ -202,6 +203,14 @@ episode count, and what it does and does not show.
   liquidation history on the box is ≥72h (section 3: pre-collection rows read
   as "no liquidations"). Awaiting from the owner: `run_baseline_check.py`
   output and the move-head importance table from the first retrain after.
+- **2026-09-29** — forward ledger built (section 11 step B), **not yet
+  deployed**; ships in the same pull as the 72h window, so the ledger starts
+  clean on the new config. Measured here at production size (27 symbols,
+  100k-candle files): a normal cycle adds ~7 MB and 0.2 s; a 2-day-outage
+  backlog of 600 alerts adds ~180 MB for ~2 s, then frees it. Disk: ~0.33 MB/day
+  at the ~400 alerts/day the operating point was set for (~120 MB/year);
+  ≤3 MB/day if the gate were saturated. `read_tail` now seeks from the end —
+  it used to read each months-long candle file whole.
 
 ## 11. The plan to a profit test
 
@@ -215,10 +224,13 @@ forever. It is out-of-sample by construction, grows every day, and is the only
 thing that can say whether acting on alerts makes money.
 
 - **A. More test episodes** — done (efdf724), awaiting deploy.
-- **B. Build the forward ledger** (roadmap S4.2, extended). Per alert: ts,
+- **B. Build the forward ledger** — built 2026-09-29: `amber/monitoring/ledger.py`,
+  `amber/signals/shadow.py`, `scripts/run_ledger_report.py`, dashboard panel
+  "Журнал сделок". Started on first run at the end of the existing logs. Per alert: ts,
   symbol, calibrated prob, `model_run_id`, did |move| ≥1% happen within 15
   bars, first-touch direction, and the net result (fees 0.09% round trip, TP =
-  SL = 1%, timeout 15 bars) of rules **fixed before any data is seen**:
+  SL = 1%, timeout 15 bars, entry on the close of the bar after the alert
+  bar, a bar touching both barriers booked as a loss) of rules **fixed before any data is seen**:
   *momentum* (trade the direction of the alert bar) and *fade* (the opposite).
   Same ledger for the `range_atr_14` rule at the same alert rate, so the model
   is always judged against the indicator. Shown on the dashboard.

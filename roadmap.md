@@ -314,7 +314,7 @@ a known inaccuracy or dead end, not a feature wish.
       caps the universe near 100 symbols. Prerequisite for any expansion beyond
       the current 27.
 
-### Sprint 6 — forward ledger and profit test · **proposed 2026-09-29**
+### Sprint 6 — forward ledger and profit test · **ledger built 2026-09-29, filling after deploy**
 
 Every live evaluation so far lives in the test segment of a rolling window
 (7h, 18h from efdf724), so it can never accumulate evidence. The forward ledger

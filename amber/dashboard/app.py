@@ -99,6 +99,7 @@ def _load_everything(root_str: str) -> dict:
         "signals": D.load_signals(storage["logs_dir"], limit=100),
         "candle_stats": D.candle_stats(storage["raw_dir"], symbols),
         "drift": D.drift_report(storage["features_dir"], model, symbols),
+        "ledger": D.ledger_summary(storage["logs_dir"]),
     }
 
 
@@ -152,6 +153,53 @@ def _kpi(label: str, value: str, sub: str = "", tone: str = "") -> str:
 def _section(title: str, caption: str = "") -> None:
     cap = f"<span class='c'>{caption}</span>" if caption else ""
     st.markdown(f"<div class='amb-h'><span class='t'>{title}</span>{cap}</div>", unsafe_allow_html=True)
+
+
+_VERDICT_RU = {
+    "underpowered": "мало данных",
+    "profitable": "в плюсе (доказано)",
+    "not_shown_profitable": "плюс не доказан",
+    "model_better": "модель лучше правила",
+    "rule_better": "правило лучше модели",
+    "indistinguishable": "не различимы",
+}
+
+
+def _ledger_panel(summary: dict | None) -> None:
+    """Forward ledger (CLAUDE.md section 11): would acting on alerts pay?"""
+    _section("Журнал сделок", "каждый алерт оценён после горизонта · вход через 1 свечу · комиссия 0.09%")
+    if not summary:
+        st.info("Журнал пуст: алерты оцениваются через 15–20 минут после появления.")
+        return
+    rows = []
+    for source, s in summary["sources"].items():
+        name = "модель" if source == "model" else "правило ATR"
+        for rule, r in s["rules"].items():
+            rows.append({
+                "источник": name,
+                "стратегия": "по свече" if rule == "momentum" else "против свечи",
+                "сделок": r["trades"],
+                "эпизодов": r["episodes"],
+                "ход 1%": s["move_hit_rate"],
+                "выигрышей": r["win_rate"],
+                "средн., bps": None if r["mean_net"] is None else round(r["mean_net"] * 1e4, 1),
+                "нижн. граница, bps": None if r["mean_net_low"] is None else round(r["mean_net_low"] * 1e4, 1),
+                "итог, %": round(r["total_net"] * 100, 2),
+                "вывод": _VERDICT_RU.get(r["verdict"], r["verdict"]),
+            })
+    st.dataframe(
+        pd.DataFrame(rows), width="stretch", hide_index=True,
+        column_config={
+            "ход 1%": st.column_config.NumberColumn(format="percent"),
+            "выигрышей": st.column_config.NumberColumn(format="percent"),
+        },
+    )
+    st.caption(
+        f"Модель против правила ATR по частоте хода: **{_VERDICT_RU.get(summary['model_vs_rule'], '?')}**. "
+        f"Вывод выдаётся только от {summary['min_episodes']} независимых эпизодов: алерты в пределах "
+        "одного горизонта на любых монетах — один эпизод. «По свече» и «против свечи» — два механических "
+        "правила, зафиксированных заранее; это бухгалтерия, Amber ордера не ставит."
+    )
 
 
 root = D.find_project_root()
@@ -263,6 +311,8 @@ with tab_overview:
             "направление дало точность 0.590 при базовой частоте 0.587, то есть +0.3 п.п. к наивному "
             "«всегда вверх». Направление определяете вы по графику (roadmap D10)."
         )
+
+    _ledger_panel(state.get("ledger"))
 
 # --- Model quality -----------------------------------------------------------
 with tab_model:

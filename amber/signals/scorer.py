@@ -168,6 +168,7 @@ def score_signal(
             "ask": feature_row.get("ask", feature_row.get("mid_price", 0.0)),
             "spread_bps": feature_row.get("spread_bps", 0.0),
             "p_none": max(0.0, 1.0 - up_cal - down_cal),
+            "model_run_id": model.get("run_id"),
         },
         explanation=explanation,
         model_version=model.get("model_type", "unknown"),

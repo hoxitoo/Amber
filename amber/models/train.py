@@ -303,6 +303,9 @@ def train_model(
     }
 
     run_id = new_run_id(prefix="model")
+    # Stamped into the artifact so every signal can name the weights that fired
+    # it; the forward ledger spans many retrains and must be split by model.
+    model["run_id"] = run_id
     out_dir = models_root / run_id
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "model.json").write_text(json.dumps(model, ensure_ascii=False, indent=2), encoding="utf-8")

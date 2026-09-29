@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 import time
+from types import SimpleNamespace
 from typing import Any
 
 from amber.alerts.router import AlertRateLimiter, route_alert
@@ -15,6 +16,7 @@ from amber.common.types import SignalV1
 from amber.models.infer import load_latest_model
 from amber.signals.filters import SignalGate, base_rate_for, effective_prob_min, passes_thresholds
 from amber.signals.scorer import _load_latest_calibration, score_signal
+from amber.signals.shadow import GATE_STATE_KEY, append_shadow_signal, load_shadow_rule, shadow_candidates
 from amber.signals.universe import select_universe
 from amber.storage.state_store import StateStore
 
@@ -67,6 +69,7 @@ def scan_once(
     thresholds: dict[str, Any],
     gate: SignalGate,
     alert_limiter: AlertRateLimiter,
+    shadow_gate: SignalGate | None = None,
 ) -> int:
     features_root = Path(config["storage"]["features_dir"])
     models_root = Path(config["storage"]["models_dir"])
@@ -146,12 +149,51 @@ def scan_once(
             route_alert(signal, channels=alert_channels, limiter=alert_limiter)
             emitted += 1
 
+    shadow_emitted = _scan_shadow(
+        logs_root, feature_rows, model, shadow_gate,
+        min_warmup=min_warmup, spread_max_bps=float(thresholds.get("spread_bps_max", 30.0)),
+    )
+
     logger.info(
-        "scan finished universe=%s symbols=%s emitted=%s gate=%s",
-        len(universe), len(feature_rows), emitted,
+        "scan finished universe=%s symbols=%s emitted=%s shadow=%s gate=%s",
+        len(universe), len(feature_rows), emitted, shadow_emitted,
         f"move>={move_min:.4f}" if move_min is not None else f"dir up>={up_min:.4f}/down>={down_min:.4f}",
     )
     return emitted
+
+
+def _scan_shadow(
+    logs_root: Path,
+    feature_rows: list[dict[str, Any]],
+    model: dict[str, Any],
+    gate: SignalGate | None,
+    *,
+    min_warmup: int,
+    spread_max_bps: float,
+) -> int:
+    """Run the range_atr_14 rule next to the model for the forward ledger.
+
+    Never allowed to break the real scan: it is measurement, not product.
+    """
+    if gate is None:
+        return 0
+    try:
+        rule = load_shadow_rule(logs_root)
+        if rule is None:
+            return 0
+        labeling = model.get("labeling", {}) if isinstance(model.get("labeling"), dict) else {}
+        horizon = int(labeling.get("horizon_steps", 15))
+        target = float(labeling.get("avg_up_pct", 0.01))
+        emitted = 0
+        for row in shadow_candidates(feature_rows, rule, min_warmup=min_warmup, spread_max_bps=spread_max_bps):
+            probe = SimpleNamespace(symbol=row["symbol"], event_ts=int(row["ts"]) / 1000.0)
+            if gate.allow(probe):
+                append_shadow_signal(logs_root, row, rule, horizon_min=horizon, target_pct=target)
+                emitted += 1
+        return emitted
+    except Exception as exc:
+        logger.warning("shadow scan failed: %s", exc)
+        return 0
 
 
 def main(loop: bool = False) -> None:
@@ -167,13 +209,21 @@ def main(loop: bool = False) -> None:
         slot_ttl_sec=max(60, horizon_min * 60),
         store=state,
     )
+    # Same limits, its own state: the rule must not take the model's slots.
+    shadow_gate = SignalGate(
+        cooldown_sec=int(thresholds_cfg.get("cooldown_sec", 90)),
+        concurrent_limit=int(thresholds_cfg.get("concurrent_limit", 5)),
+        slot_ttl_sec=max(60, horizon_min * 60),
+        store=state,
+        state_key=GATE_STATE_KEY,
+    )
     alert_limiter = AlertRateLimiter(cooldown_sec=max(0, int(thresholds_cfg.get("cooldown_sec", 0))), store=state)
 
     interval = max(5, int(config.get("scanner", {}).get("interval_sec", 60)))
     try:
         with SingleInstanceLock(Path(config["storage"]["state_dir"]) / "locks", "scanner"):
             while True:
-                scan_once(config, thresholds_cfg, gate, alert_limiter)
+                scan_once(config, thresholds_cfg, gate, alert_limiter, shadow_gate)
                 if not loop:
                     break
                 time.sleep(interval)

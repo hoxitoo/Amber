@@ -156,6 +156,15 @@ labeling:
   # than the liquidation history on disk.
   max_candles_per_symbol: 4320
 
+# Forward ledger (amber/monitoring/ledger.py; CLAUDE.md section 11). Every
+# live alert, and every alert of the range_atr_14 shadow rule, is scored after
+# its horizon and kept. These are fixed in advance: changing them mid-run splits
+# the ledger into incomparable halves.
+ledger:
+  lag_bars: 1        # enter on the close of the bar after the alert bar
+  cost: 0.0009       # round trip: 5 bps slippage + 4 bps fee, as the backtest books it
+  expire_hours: 6    # write an alert off as no_data if its candles never arrive
+
 model:
   cv:
     n_folds: 3

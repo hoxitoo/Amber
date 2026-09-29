@@ -144,6 +144,21 @@ def run_training(
         ordered, pts, _mode = order_with_pseudo_time(rows)
         trained = load_latest_model(models_root)
         oos = split_rows(ordered, pts, trained["splits"])["test"] if trained.get("splits") else ordered
+        if oos and ev.get("rows"):
+            # The shadow rule for the forward ledger: range_atr_14 alone, cut
+            # to fire on the same share of this segment as the model did.
+            try:
+                from amber.signals.shadow import fit_shadow_rule, save_shadow_rule
+
+                fired_share = float(ev.get("n_predicted_move", 0.0)) / float(ev["rows"])
+                rule = fit_shadow_rule(oos, fired_share, model_run_id=tr["run_id"])
+                save_shadow_rule(logs_root, rule)
+                logger.info(
+                    "shadow rule: %s >= %s (model fires on %.4f%% of test rows)",
+                    rule["feature"], rule["threshold"], fired_share * 100,
+                )
+            except Exception as exc:
+                logger.warning("shadow rule fit failed: %s", exc)
         if oos:
             # Measure the head the scanner gates on. Until 2026-09-29 this was
             # hard-wired to `pump`, three weeks after `move` became the primary
