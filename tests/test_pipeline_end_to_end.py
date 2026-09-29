@@ -180,6 +180,10 @@ class TestPipelineEndToEnd(unittest.TestCase):
         """A silent {} here is what makes every panel read 0."""
         self.assertTrue(self.thresholds, "config/thresholds.yaml was not located")
 
+    def test_backtest_replays_the_move_gate(self):
+        bt = event_backtest(self.datasets, self.models, thresholds=self.thresholds)
+        self.assertEqual(bt["mode"], "move_momentum", "backtest traded a gate the scanner does not run")
+
     def test_backtest_produces_trades(self):
         bt = event_backtest(self.datasets, self.models, thresholds=self.thresholds)
         self.assertGreater(bt["signals"], 0, "backtest replayed no trades")

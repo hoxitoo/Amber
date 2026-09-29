@@ -76,6 +76,19 @@ def sweep_thresholds(
 ) -> dict[str, Any]:
     """Sweep the grid, returning every point plus a verdict on the best one."""
     model = load_latest_model(models_root)
+    heads = model.get("heads", {}) if isinstance(model.get("heads"), dict) else {}
+    if "move" in heads:
+        # This grid tunes the pump/dump gate and trades their direction. With a
+        # move head neither gates anything, but `prob_lift_min` is shared: a
+        # "holds" verdict here once offered a one-click apply of lift 1.2-3.0,
+        # which would have opened the live move gate from 9.55. The move gate's
+        # threshold comes from scripts/run_operating_curve.py; whether alerts
+        # pay is measured forward by the ledger.
+        return {
+            "status": "not_applicable",
+            "reason": "модель гейтится по голове move; порог move подбирает "
+                      "scripts/run_operating_curve.py, прибыль меряет журнал сделок",
+        }
     calib = _load_latest_calibration(models_root)
     all_rows, dataset_run = load_latest_dataset_rows(datasets_root)
     rows, pseudo_ts, _ = order_with_pseudo_time(all_rows)

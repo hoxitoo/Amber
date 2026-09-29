@@ -18,6 +18,7 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amber.common.config import ConfigLoader
+from amber.common.locks import AlreadyRunning, SingleInstanceLock
 from amber.common.logging import setup_logging
 from amber.common.retention import cleanup_consumed_ws_raw, dataset_keep, free_bytes, prune_run_dirs
 from amber.datasets.build import build_dataset_from_config
@@ -172,6 +173,16 @@ def _update_ledger(config: dict) -> None:
 def main() -> None:
     cfg = ConfigLoader(Path.cwd()).load_yaml("config/amber.yaml")
     setup_logging(cfg.get("run", {}).get("log_level", "INFO"))
+    # One loop per box. A second one (the dashboard's start button while
+    # systemd runs this) meant two retrains at once and two ledger writers.
+    try:
+        with SingleInstanceLock(Path(cfg["storage"]["state_dir"]) / "locks", "pipeline_loop"):
+            _run(cfg)
+    except AlreadyRunning as exc:
+        logger.warning("pipeline loop already running; not starting another (%s)", exc)
+
+
+def _run(cfg: dict) -> None:
     pipeline_cfg = cfg.get("pipeline", {}) if isinstance(cfg.get("pipeline", {}), dict) else {}
     interval = max(15, int(pipeline_cfg.get("loop_sec", 60)))
     retrain_min = int(pipeline_cfg.get("retrain_min", 60))
@@ -221,6 +232,8 @@ def main() -> None:
                 _retrain(cfg)
             except NotEnoughData as exc:
                 logger.info("auto-retrain skipped: %s", exc)
+            except AlreadyRunning as exc:
+                logger.warning("auto-retrain skipped: a manual retrain is running (%s)", exc)
             except Exception as exc:
                 logger.error("auto-retrain failed: %s", exc)
             last_retrain = now

@@ -116,6 +116,8 @@ def _latest_eval_metrics(logs_dir: Path) -> tuple[dict[str, float], float | None
     # filtered out here, so the "Модель" tab always showed PR-AUC as "—" even
     # when eval had computed and emitted them.
     wanted = {
+        "model_precision_at_threshold",
+        "model_brier",
         "model_precision_up_at_threshold",
         "model_precision_down_at_threshold",
         "model_brier_up_cal",
@@ -124,6 +126,13 @@ def _latest_eval_metrics(logs_dir: Path) -> tuple[dict[str, float], float | None
         "model_pr_auc_down_cal",
         "model_pr_auc_up_lift",
         "model_pr_auc_down_lift",
+        # The gating head. Missing from this set until 2026-09-29, so the
+        # dashboard could not show the one head that decides alerts.
+        "model_precision_move_at_threshold",
+        "model_brier_move_cal",
+        "model_pr_auc_move_cal",
+        "model_pr_auc_move_lift",
+        "model_auc_move_cal",
     }
     latest: dict[str, tuple[datetime, float]] = {}
     has_real_ts = False

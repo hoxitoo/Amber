@@ -27,10 +27,15 @@ session** — a result that lives only in chat is lost.
 ## 1. When a core definition changes, find every consumer
 
 The primary target became `move` on 2026-09-06. For weeks afterwards:
-`evaluate_model` measured `pump`; permutation importance measured `pump`
-(fixed 2026-09-29); the backtest still trades direction. Each reported numbers
-about a head that decides nothing, and I reported them as if they meant
-something.
+`evaluate_model` measured `pump`; permutation importance measured `pump`; the
+backtest and the daily threshold sweep replayed the pump/dump gate; the
+Telegram alert led with up/down probabilities; the dashboard's out-of-sample
+panel showed pump; and rolling recalibration (every 20 min) checked only
+pump/dump and, on a refit, **dropped the move head's calibration**, so the live
+gate ran on raw scores until the next retrain. All fixed 2026-09-29. The sweep
+could even one-click apply `prob_lift_min` 1.2-3.0 — a value that now opens the
+move gate (live: 9.55). Each reported numbers about a head that decides
+nothing, and I reported them as if they meant something.
 
 - On any change to the target, label, feature set, gating head or threshold
   semantics: `grep -rn` the old name across `amber/ scripts/ tests/` and list
@@ -109,7 +114,9 @@ For every change that ships, answer before pushing:
 
 ## 6. Commands I give the owner
 
-The owner runs them verbatim on the VPS as root.
+The owner runs them verbatim on the VPS as root. Every command block is fenced
+as ```bash so the chat highlights it — the owner asked for this; unlabelled
+fences render as plain grey text.
 - Always from the project dir, as the service user, with the venv:
   `cd /opt/amber && sudo -u amber git pull`
   `cd /opt/amber && sudo -u amber /opt/amber/.venv/bin/python scripts/<x>.py`
@@ -119,6 +126,11 @@ The owner runs them verbatim on the VPS as root.
 - Say how long to wait before a result means anything (the training window is
   `max_candles_per_symbol` long; a new feature carries zeros until it rolls over).
 - Give the exact lines to look for in the output, and what each outcome means.
+
+- The dashboard's start buttons and systemd run the same services. Every
+  service entry point takes a `SingleInstanceLock` (kernel flock), retraining
+  locks `models/`, dataset builds lock `datasets/`; a new long-running entry
+  point must do the same or a button can start a second copy.
 
 ## 7. Never
 
@@ -212,6 +224,17 @@ episode count, and what it does and does not show.
   ≤3 MB/day if the gate were saturated. `read_tail` now seeks from the end —
   it used to read each months-long candle file whole.
 
+- **2026-09-29** — full-system audit, fixes pushed (not yet deployed; same
+  pull as the window and the ledger): recalibration kept/checks the move
+  head; backtest replays the move gate (momentum/fade, like the ledger);
+  threshold sweep refuses move models; alert text leads with P(move) and says
+  direction is not predicted; dashboard shows move metrics; ledger enters
+  after the alert was actually sent (`emitted_ms`), not one bar after its bar;
+  service/retrain/build locks, flock-based so a reboot cannot leave a service
+  refusing to start. **Unknown until the owner checks:** whether the live gate
+  has been running on uncalibrated move scores (latest calibration lacking a
+  `move` head).
+
 ## 11. The plan to a profit test
 
 Proposed 2026-09-29. Why we have been circling: the only out-of-sample data is
@@ -226,7 +249,11 @@ thing that can say whether acting on alerts makes money.
 - **A. More test episodes** — done (efdf724), awaiting deploy.
 - **B. Build the forward ledger** — built 2026-09-29: `amber/monitoring/ledger.py`,
   `amber/signals/shadow.py`, `scripts/run_ledger_report.py`, dashboard panel
-  "Журнал сделок". Started on first run at the end of the existing logs. Per alert: ts,
+  "Журнал сделок". Started on first run at the end of the existing logs.
+  Barriers are checked on candle highs/lows (where a resting order fills);
+  the training label follows the bid/ask mid, so the ledger's move hit rate
+  is not comparable with calibrated P(move) — compare model with rule inside
+  the ledger. Per alert: ts,
   symbol, calibrated prob, `model_run_id`, did |move| ≥1% happen within 15
   bars, first-touch direction, and the net result (fees 0.09% round trip, TP =
   SL = 1%, timeout 15 bars, entry on the close of the bar after the alert

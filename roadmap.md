@@ -324,6 +324,14 @@ timeout, 0.09% fees), next to the same ledger for `range_atr_14`. Freeze the
 code while it fills; decide at ≥30 episodes. Supersedes S4.2. Full plan:
 `CLAUDE.md` section 11.
 
+Audit 2026-09-29 (before the ledger starts, so it measures the system as
+intended): the move head's calibration was dropped by every rolling
+recalibration refit; backtest, threshold sweep, alert text and dashboard
+metrics still described the pump/dump gate; the ledger entered before a late
+alert could be seen; and nothing stopped the dashboard or a reboot-reused PID
+from duplicating or blocking a service. All fixed with tests that fail on the
+previous code; details in `CLAUDE.md` sections 1 and 10.
+
 ### Backlog
 - [ ] T6 cross-exchange lead/lag features · A7 feature-list relocation.
 - [ ] Universe expansion to 100–200 symbols. Measured ceilings: memory ~50

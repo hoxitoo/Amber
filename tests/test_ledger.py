@@ -100,6 +100,19 @@ class TestResolveAlert(unittest.TestCase):
         del bars[4]
         self.assertEqual(_resolve(bars, 1)["status"], "gap")
 
+    def test_a_late_alert_enters_after_it_was_sent_not_after_its_bar(self):
+        """The alert bar closes at +1 bar; sent 90 s after that, the first bar
+        a person can act on closes at +3 bars (entry_lag 2), so the jump on
+        bar 3 is already in the entry price and must not be booked."""
+        bars = _bars([100, 101, 101, 103, 103, 103, 103, 103, 103, 103])
+        on_time = resolve_alert(bars, [b["ts"] for b in bars], T0 + STEP, horizon=5, barrier=B,
+                                lag_bars=1, cost=COST, emitted_ms=T0 + 2 * STEP)
+        late = resolve_alert(bars, [b["ts"] for b in bars], T0 + STEP, horizon=5, barrier=B,
+                             lag_bars=1, cost=COST, emitted_ms=T0 + 2 * STEP + 90_000)
+        self.assertEqual((on_time["entry_lag"], on_time["move_hit"]), (1, 1))
+        self.assertEqual((late["entry_lag"], late["move_hit"]), (2, 0))
+        self.assertAlmostEqual(late["entry"], 103)
+
     def test_a_flat_alert_bar_has_no_trade(self):
         bars = _bars([100, 100, 101, 101, 101, 101, 101, 101, 101])
         r = _resolve(bars, 1)

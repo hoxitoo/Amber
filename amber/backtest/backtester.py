@@ -171,6 +171,79 @@ def replay_with_probs(
     return pnls, counts, extra
 
 
+def replay_move(
+    rows: list[dict[str, Any]],
+    move_probs: list[float],
+    *,
+    move_min: float,
+    spread_max: float,
+    cost: float,
+) -> tuple[list[float], dict[str, int], dict[str, Any]]:
+    """Replay the gate the scanner runs on a move model, traded as the ledger trades.
+
+    The scanner alerts on P(move) and says nothing about direction, so there
+    is no model direction to trade. The same two rules the forward ledger
+    fixes in advance are booked instead: `momentum` follows the sign of the
+    alert bar's return (`ret_1`), `fade` takes the other side. Momentum is the
+    headline; fade is reported alongside. Entry is one bar after the decision,
+    as live, and a timeout pays the round trip.
+
+    Until 2026-09-29 the backtest kept replaying the pump/dump gate with its
+    directional filter on move models — a strategy the scanner no longer ran.
+    """
+    pnls: list[float] = []
+    fade: list[float] = []
+    counts = {"TP": 0, "SL": 0, "Timeout": 0}
+    open_until: dict[str, int] = {}
+    pending: dict[str, int] = {}  # symbol -> momentum direction decided last bar
+    evaluated = flat = 0
+
+    for r, p_move in zip(rows, move_probs):
+        symbol = str(r.get("symbol", ""))
+        if symbol in pending:
+            want = pending.pop(symbol)
+            first = _first_touch(r)
+            gain, loss = float(r.get("up_pct", 0.002)), float(r.get("down_pct", 0.002))
+            if want == -1:
+                gain, loss = loss, gain
+            if first == want:
+                pnls.append(gain - cost)
+                fade.append(-gain - cost)
+                counts["TP"] += 1
+            elif first == -want:
+                pnls.append(-loss - cost)
+                fade.append(loss - cost)
+                counts["SL"] += 1
+            else:
+                pnls.append(-cost)
+                fade.append(-cost)
+                counts["Timeout"] += 1
+            open_until[symbol] = int(r.get("horizon_steps", 0) or 0)
+            continue
+
+        if open_until.get(symbol, 0) > 0:
+            open_until[symbol] -= 1
+            continue
+        evaluated += 1
+        if float(r.get("spread_bps", 0.0) or 0.0) > spread_max or p_move < move_min:
+            continue
+        ret = float(r.get("ret_1", 0.0) or 0.0)
+        if ret == 0.0:
+            flat += 1  # no direction to follow or fade, as in the ledger
+            continue
+        pending[symbol] = 1 if ret > 0 else -1
+
+    extra = {
+        "mode": "move_momentum",
+        "entry_lag_bars": 1,
+        "rows_evaluated": evaluated,
+        "alerts_flat_bar": flat,
+        "fade_expectancy": (sum(fade) / len(fade)) if fade else 0.0,
+        "fade_total": sum(fade),
+    }
+    return pnls, counts, extra
+
+
 def score_rows(
     rows: list[dict[str, Any]], model: dict[str, Any], calibration: dict[str, Any]
 ) -> list[tuple[float, float]]:
@@ -275,6 +348,24 @@ def event_backtest(
     if not rows:
         raise ValueError(f"No dataset rows for horizon={chosen}")
 
-    pnls, counts, extra = _signal_replay(rows, model, calibration, thresholds or {}, cost)
+    heads = model.get("heads", {}) if isinstance(model.get("heads"), dict) else {}
+    if "move" in heads:
+        from amber.models.infer import infer_row_prob
+        from amber.signals.filters import base_rate_for, effective_prob_min
+        from amber.signals.scorer import calibrated_prob_for_target
+
+        thr = thresholds or {}
+        move_min = effective_prob_min(thr, base_rate_for(model, "move"), absolute_key="move_prob_calibrated_min")
+        probs = [
+            calibrated_prob_for_target(infer_row_prob(model, r, target="move"), calibration, target="move")
+            for r in rows
+        ]
+        pnls, counts, extra = replay_move(
+            rows, probs, move_min=move_min,
+            spread_max=float(thr.get("spread_bps_max", 30.0)), cost=cost,
+        )
+        extra["move_min"] = move_min
+    else:
+        pnls, counts, extra = _signal_replay(rows, model, calibration, thresholds or {}, cost)
     extra.update({"segment": segment, "horizon_steps": chosen})
     return {"dataset_run": dataset_run, **_aggregate(pnls, counts, extra)}

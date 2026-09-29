@@ -90,6 +90,22 @@ class TestB1B2Reporting(unittest.TestCase):
             self.assertIn("model_pr_auc_up_lift", metrics)
             self.assertNotIn("model_unrelated", metrics)
 
+    def test_every_metric_the_retrain_emits_reaches_the_dashboard(self):
+        """Pinned to the live list: the move metrics were emitted for three
+        weeks and filtered out here, so the gating head never showed."""
+        from amber.monitoring.reporting import _latest_eval_metrics
+        from amber.pipeline.train_app import _METRIC_KEYS
+
+        with tempfile.TemporaryDirectory() as td:
+            logs = Path(td)
+            (logs / "metrics.jsonl").write_text(
+                "".join(json.dumps({"metric": f"model_{k}", "value": 0.5}) + "\n" for k in _METRIC_KEYS),
+                encoding="utf-8",
+            )
+            metrics, _age = _latest_eval_metrics(logs)
+            missing = [k for k in _METRIC_KEYS if f"model_{k}" not in metrics]
+            self.assertEqual(missing, [])
+
     def test_load_thresholds_walks_up_to_config(self):
         from amber.monitoring.reporting import _load_thresholds
 

@@ -250,8 +250,9 @@ age_txt = _fmt_age(None if raw_age is None else raw_age / 60)
 age_tone = "good" if checks.get("raw_fresh") else ("bad" if raw_age is not None else "")
 model_txt = {"fresh": "свежая", "stale": "устарела", "missing": "нет"}.get(model_status, model_status)
 model_tone = {"fresh": "good", "stale": "bad", "missing": ""}.get(model_status, "")
-pr_up = ev.get("model_pr_auc_up_cal")
-pr_lift = ev.get("model_pr_auc_up_lift")
+# The gating head when the model has one; pump only for older models.
+pr_up = ev.get("model_pr_auc_move_cal", ev.get("model_pr_auc_up_cal"))
+pr_lift = ev.get("model_pr_auc_move_lift", ev.get("model_pr_auc_up_lift"))
 pr_sub = f"lift ×{_num(pr_lift, '{:.2f}')}" if pr_lift else "нужно обучение"
 
 st.markdown(
@@ -260,7 +261,7 @@ st.markdown(
     + _kpi("Модель (eval)", model_txt, "статус метрик", model_tone)
     + _kpi("Символов", str(len(state["symbols"])), "в конфиге")
     + _kpi("Датасет", _fmt_span(ds), _ds_sub(ds))
-    + _kpi("PR-AUC↑", _num(pr_up), pr_sub, "accent")
+    + _kpi("PR-AUC move" if "model_pr_auc_move_cal" in ev else "PR-AUC↑", _num(pr_up), pr_sub, "accent")
     + "</div>",
     unsafe_allow_html=True,
 )
@@ -350,22 +351,26 @@ with tab_model:
         q3.metric("Bias (pump−dump)", _num(q.get("prediction_bias")))
         q4.metric("PSI дрифт", str(q.get("psi", {}).get("level", "—")))
 
-        _section("Out-of-sample метрики", "test-сегмент; PR-AUC — главная метрика для редких событий")
+        _section("Out-of-sample метрики", "test-сегмент · голова move, по которой стоит гейт")
+        # The move head decides every alert. These four showed the pump head
+        # for three weeks after the gate moved, i.e. a head that decides
+        # nothing; pump/dump stay in the caption as context only.
         e1, e2, e3, e4 = st.columns(4)
         e1.metric(
-            "PR-AUC↑",
-            _num(ev.get("model_pr_auc_up_cal")),
-            delta=(f"lift ×{_num(ev.get('model_pr_auc_up_lift'), '{:.2f}')}" if ev.get("model_pr_auc_up_lift") else None),
+            "PR-AUC move",
+            _num(ev.get("model_pr_auc_move_cal")),
+            delta=(f"lift ×{_num(ev.get('model_pr_auc_move_lift'), '{:.2f}')}" if ev.get("model_pr_auc_move_lift") else None),
         )
-        e2.metric(
-            "PR-AUC↓",
-            _num(ev.get("model_pr_auc_down_cal")),
-            delta=(f"lift ×{_num(ev.get('model_pr_auc_down_lift'), '{:.2f}')}" if ev.get("model_pr_auc_down_lift") else None),
+        e2.metric("AUC move", _num(ev.get("model_auc_move_cal")))
+        e3.metric("Precision move @порог", _num(ev.get("model_precision_move_at_threshold")))
+        e4.metric("Brier move", _num(ev.get("model_brier_move_cal")))
+        st.caption(
+            f"Контекст, не гейт: PR-AUC pump {_num(ev.get('model_pr_auc_up_cal'))}, "
+            f"dump {_num(ev.get('model_pr_auc_down_cal'))}. Precision на test-сегменте — это несколько часов "
+            "окна; решающий замер — журнал сделок на вкладке «Обзор»."
         )
-        e3.metric("Precision↑@thr", _num(ev.get("model_precision_up_at_threshold")))
-        e4.metric("Brier↑", _num(ev.get("model_brier_up_cal")))
 
-        _section("Бэктест", "promotion gate · вход с лагом 1 бар · test-сегмент · считается при переобучении")
+        _section("Бэктест", "гейт move · сделка по свече алерта · вход с лагом 1 бар · test-сегмент")
         if bt.get("error"):
             st.warning(f"Бэктест недоступен: {bt['error']}")
         elif bt.get("status") == "pending":
@@ -392,6 +397,8 @@ with tab_model:
                 f"матожидание {exp_bps:+.2f} bps/сделку · Sharpe {_num(bt.get('sharpe'))} · "
                 f"режим: {bt.get('mode', '—')} · сегмент: {bt.get('segment', '—')} · "
                 f"лаг входа: {bt.get('entry_lag_bars', 0)} бар"
+                + (f" · против свечи: {float(bt.get('fade_expectancy', 0.0)) * 1e4:+.2f} bps/сделку"
+                   if bt.get("mode") == "move_momentum" else "")
             )
             if to > tp + sl:
                 st.warning(
@@ -412,7 +419,7 @@ with tab_model:
             for target, rep in health.get("heads", {}).items():
                 before = rep.get("before", {})
                 after = rep.get("after") if rep.get("refit") else None
-                label = "pump" if target == "pump" else "dump"
+                label = target
                 cols[i].metric(
                     f"ECE {label}",
                     _num((after or before).get("ece"), "{:.4f}"),
@@ -635,7 +642,15 @@ with tab_control:
         stt = pm.status(name)
         col_lbl, col_state, col_btn = st.columns([2, 2, 1])
         col_lbl.markdown(f"**{svc['label']}**")
-        if stt["running"]:
+        if stt["running"] and stt.get("external"):
+            # Run by systemd on the VPS: stopping it from here would only be
+            # undone by systemd's restart policy, and starting would duplicate it.
+            col_state.markdown(
+                f"<span class='amb-chip' style='background:rgba(46,158,107,.15);color:#2E9E6B'>"
+                f"● работает · PID {stt['pid']} · systemd</span>",
+                unsafe_allow_html=True,
+            )
+        elif stt["running"]:
             up = stt["uptime_sec"] or 0
             col_state.markdown(
                 f"<span class='amb-chip' style='background:rgba(46,158,107,.15);color:#2E9E6B'>"

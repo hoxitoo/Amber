@@ -107,7 +107,9 @@ class TestHonestML(unittest.TestCase):
                     "spread_bps_max": 100.0,
                 },
             )
-            self.assertEqual(bt["mode"], "model_signals")
+            # The model has a move head, so the backtest replays the move gate
+            # the scanner runs (was `model_signals`, the pump/dump gate).
+            self.assertEqual(bt["mode"], "move_momentum")
             self.assertEqual(bt["segment"], "test_split")
             self.assertEqual(bt["horizon_steps"], 5)
             self.assertIn("sharpe", bt)

@@ -45,7 +45,8 @@ def _pid_alive(pid: int | None) -> bool:
 class ProcessManager:
     """Manage background services and synchronous pipeline runs for one project."""
 
-    def __init__(self, runtime_dir: Path, project_root: Path) -> None:
+    def __init__(self, runtime_dir: Path, project_root: Path, lock_dir: Path | None = None) -> None:
+        self.lock_dir = Path(lock_dir) if lock_dir is not None else Path(runtime_dir).parent / "locks"
         self.dir = Path(runtime_dir)
         self.dir.mkdir(parents=True, exist_ok=True)
         self.root = Path(project_root)
@@ -70,20 +71,37 @@ class ProcessManager:
         meta = self._read_meta(name)
         return bool(meta) and _pid_alive(meta.get("pid"))
 
+    def external_pid(self, name: str) -> int | None:
+        """PID of an instance this dashboard did not start — on the VPS, the
+        systemd service — found through the lock file every service holds.
+
+        The panel used to know only its own children, so a service run by
+        systemd showed as stopped and "Старт" launched a second copy: two
+        retrains at once on a 3.9 GB box, and two collectors double-counting
+        every trade and liquidation.
+        """
+        from amber.common.locks import lock_holder
+
+        lock = SERVICES.get(name, {}).get("lock")
+        return lock_holder(self.lock_dir, lock) if lock else None
+
     def status(self, name: str) -> dict[str, Any]:
         meta = self._read_meta(name) or {}
         running = self.is_running(name)
         started = meta.get("started_at")
+        external = None if running else self.external_pid(name)
         return {
             "name": name,
-            "running": running,
-            "pid": meta.get("pid") if running else None,
+            "running": running or external is not None,
+            "external": external is not None,
+            "pid": meta.get("pid") if running else external,
             "uptime_sec": (time.time() - started) if (running and started) else None,
         }
 
     def start(self, name: str, argv: list[str]) -> bool:
-        """Spawn a detached background process. Returns False if already running."""
-        if self.is_running(name):
+        """Spawn a detached background process. Returns False if already running,
+        whether started here or elsewhere."""
+        if self.is_running(name) or self.external_pid(name) is not None:
             return False
         kwargs: dict[str, Any] = {}
         if os.name == "nt":
@@ -203,9 +221,12 @@ def apply_thresholds(project_root: Path, prob_lift_min: float, directional_score
 
 # Command registry used by the dashboard control panel.
 SERVICES: dict[str, dict[str, Any]] = {
-    "ws_collector": {"label": "WS-коллектор (сбор сырых данных)", "argv": ["scripts/run_ws_collector.py"]},
-    "pipeline": {"label": "Авто-конвейер (normalize + features)", "argv": ["scripts/run_pipeline_loop.py"]},
-    "scanner": {"label": "Сканер (сигналы, loop)", "argv": ["scripts/run_scanner.py", "--loop"]},
+    "ws_collector": {"label": "WS-коллектор (сбор сырых данных)", "argv": ["scripts/run_ws_collector.py"],
+                     "lock": "ws_collector"},
+    "pipeline": {"label": "Авто-конвейер (normalize + features)", "argv": ["scripts/run_pipeline_loop.py"],
+                 "lock": "pipeline_loop"},
+    "scanner": {"label": "Сканер (сигналы, loop)", "argv": ["scripts/run_scanner.py", "--loop"],
+                "lock": "scanner"},
 }
 
 PIPELINE_STEPS: list[dict[str, Any]] = [

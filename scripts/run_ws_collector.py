@@ -97,4 +97,13 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    from amber.common.locks import AlreadyRunning, SingleInstanceLock
+
+    _cfg = ConfigLoader(Path.cwd()).load_yaml("config/amber.yaml")
+    # Two collectors would each write every trade and liquidation; candles are
+    # deduplicated by timestamp downstream, per-minute flow sums are not.
+    try:
+        with SingleInstanceLock(Path(_cfg["storage"]["state_dir"]) / "locks", "ws_collector"):
+            asyncio.run(main())
+    except AlreadyRunning as exc:
+        logging.getLogger(__name__).warning("ws collector already running; not starting another (%s)", exc)

@@ -33,6 +33,16 @@ def to_human_explanation(signal: SignalV1, top_n: int = 3) -> str:
     impacts = sorted(impacts, key=lambda x: abs(x[1]), reverse=True)[: max(1, top_n)]
     impacts_str = ", ".join([f"{k}={v:.4f}" for k, v in impacts]) if impacts else "n/a"
 
+    # The alert text is what the owner acts on. It led with up_cal/down_cal/dir
+    # three weeks after the gate moved to `move`, which read as a direction
+    # call — measured at 0.590 precision against a 0.587 base rate, i.e. none.
+    if signal.prob_move_calibrated is not None:
+        return (
+            f"{signal.symbol} | ход ≥{signal.target_up_pct * 100:.1f}% в любую сторону "
+            f"за {signal.horizon_min} мин: P={signal.prob_move_calibrated:.2f} | "
+            f"направление не прогнозируется | драйверы: {impacts_str}"
+        )
+
     directional = _directional_score(signal.explanation.rule_trace)
     directional_str = "n/a" if directional is None else f"{directional:+.3f}"
 

@@ -23,9 +23,18 @@ rule chosen after looking at the ledger would be fitted to it:
 - `fade`: the opposite.
 
 Both use the alert's own barrier as take-profit and stop-loss, time out at the
-horizon, enter `lag_bars` after the alert bar (a person cannot act on the bar
-that produced the alert), and pay `cost` per round trip. A bar touching both
-barriers is booked as a loss: 1m bars do not say which came first.
+horizon, and pay `cost` per round trip. Entry is the close of the first bar
+that closes after the alert was actually sent (`emitted_ms`), never sooner
+than `lag_bars` after the alert bar: the pipeline and the scanner each run once
+a minute, so an alert can arrive two bars late, and entering at a price that
+was already gone would flatter every rule. A bar touching both barriers is
+booked as a loss: 1m bars do not say which came first.
+
+Barriers are checked against candle highs and lows, because that is where a
+resting take-profit or stop fills. The training label is not: it follows the
+per-minute bid/ask mid, which has no wicks. So the ledger's move hit rate runs
+above the model's calibrated P(move) and the two are not comparable; compare
+model with rule inside the ledger, where both are scored the same way.
 
 Amber places no orders. This is bookkeeping over public candles.
 """
@@ -76,6 +85,7 @@ def resolve_alert(
     barrier: float,
     lag_bars: int = DEFAULT_LAG_BARS,
     cost: float = DEFAULT_COST,
+    emitted_ms: int | None = None,
 ) -> dict[str, Any] | None:
     """Score one alert against the candles that followed it.
 
@@ -86,6 +96,14 @@ def resolve_alert(
     """
     if barrier <= 0 or horizon <= 0:
         return {"status": "bad_signal"}
+    # Enter on the first bar that closes after the alert was sent, and never
+    # sooner than `lag_bars`. The alert bar closes at event_ts + 1 bar; an alert
+    # sent d ms after that can first be acted on at the close of bar
+    # floor(d / bar) + 1. Signals logged before emission times were recorded
+    # fall back to `lag_bars`.
+    if emitted_ms is not None:
+        delay = max(0, int(emitted_ms) - (event_ts + STEP_MS))
+        lag_bars = max(lag_bars, delay // STEP_MS + 1)
     i0 = bisect_left(ts_list, event_ts)
     if i0 >= len(ts_list):
         return None  # the alert bar has not been normalised yet
@@ -135,6 +153,7 @@ def resolve_alert(
         "first_touch": first_touch,
         "bar_dir": bar_dir,
         "entry": entry,
+        "entry_lag": lag_bars,
         "momentum_net": _trade(bar_dir),
         "fade_net": _trade(-bar_dir),
     }
@@ -174,6 +193,7 @@ def _alert_fields(source: str, row: dict[str, Any]) -> dict[str, Any] | None:
         "barrier": float(row.get("target_up_pct", 0.0) or 0.0),
         # Which weights fired it. Absent on signals logged before 2026-09-29.
         "model_run_id": (row.get("market_context") or {}).get("model_run_id") or row.get("model_run_id"),
+        "emitted_ms": (row.get("market_context") or {}).get("emitted_ms") or row.get("emitted_ms"),
     }
     if source == "model":
         fields["score"] = row.get("prob_move_calibrated")
@@ -245,6 +265,7 @@ def update_ledger(
             res = resolve_alert(
                 candles, index.timestamps(alert["symbol"]), alert["event_ts"],
                 horizon=alert["horizon"], barrier=alert["barrier"], lag_bars=lag_bars, cost=cost,
+                emitted_ms=alert["emitted_ms"],
             )
             if res is None:
                 if now_ms - alert["event_ts"] < expire_hours * 3_600_000:

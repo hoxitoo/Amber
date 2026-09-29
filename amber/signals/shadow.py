@@ -112,8 +112,10 @@ def append_shadow_signal(
     *,
     horizon_min: int,
     target_pct: float,
+    emitted_ms: int | None = None,
 ) -> None:
     rec = {
+        "emitted_ms": emitted_ms,
         "event_ts": int(row["ts"]),
         "symbol": row["symbol"],
         "horizon_min": horizon_min,

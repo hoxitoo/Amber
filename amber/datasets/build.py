@@ -95,7 +95,20 @@ def _validate_horizons(horizon_steps: int, horizon_steps_list: list[int] | None)
 
 
 def build_dataset_from_config(config: dict[str, Any]) -> dict[str, int]:
-    """Build the dataset using the labeling params from a loaded config."""
+    """Build the dataset using the labeling params from a loaded config.
+
+    Holds a lock on the datasets directory so a manual build from the dashboard
+    cannot run alongside the pipeline's hourly one.
+    """
+    from amber.common.locks import SingleInstanceLock
+
+    datasets_root = Path(config["storage"]["datasets_dir"])
+    datasets_root.mkdir(parents=True, exist_ok=True)
+    with SingleInstanceLock(datasets_root, "build"):
+        return _build_from_config(config)
+
+
+def _build_from_config(config: dict[str, Any]) -> dict[str, int]:
     labeling = config.get("labeling", {})
     return build_dataset(
         features_root=Path(config["storage"]["features_dir"]),

@@ -1,7 +1,7 @@
 """Calibration health and rolling recalibration (audit M5).
 
-A retrain fits calibration on the segment 70-85% of the way through the training
-window — with a 48h window that is data roughly 7-14 hours old. That is fine
+A retrain fits calibration on the segment 60-75% of the way through the training
+window — with a 72h window that is data roughly 18-29 hours old. That is fine
 while the market is stationary and wrong when it is not: the observed event rate
 here moved from ~10% to ~22% (pump) and ~7% to ~28% (dump) inside two weeks, and
 a calibration fitted before the shift maps scores to the old frequencies. The
@@ -150,9 +150,19 @@ def check_and_recalibrate(
     report: dict[str, Any] = {}
     refit_any = False
 
-    for target, label_key in (("pump", "up_hit"), ("dump", "down_hit")):
+    from amber.labeling.events import move_label
+
+    # `move` first: it is the head the scanner gates on. Until 2026-09-29 only
+    # pump and dump were checked here, and a refit wrote a calibration holding
+    # those two heads alone — so the first refit after a retrain silently
+    # dropped the move head's calibration, and the gate ran on raw scores
+    # until the next retrain.
+    model_heads = model.get("heads", {}) if isinstance(model.get("heads"), dict) else {}
+    targets = [t for t in (("move", "move_hit"), ("pump", "up_hit"), ("dump", "down_hit"))
+               if t[0] in model_heads or (t[0] != "move" and not model_heads)]
+    for target, label_key in targets:
         raw = [infer_row_prob(model, r, target=target) for r in rows]
-        y = [int(r.get(label_key, 0)) for r in rows]
+        y = [move_label(r) if label_key == "move_hit" else int(r.get(label_key, 0)) for r in rows]
         current = [calibrated_prob_for_target(p, calib, target=target) for p in raw]
         before = calibration_error(current, y)
 
@@ -170,9 +180,13 @@ def check_and_recalibrate(
                 else:
                     head_report["after"] = after
                     head_report["rejected"] = "refit did not reduce ECE"
-        if target not in out_heads and isinstance(heads.get(target), dict):
-            out_heads[target] = heads[target]
         report[target] = head_report
+
+    # Every head not refit keeps the mapping it had, including any this loop
+    # did not examine: a refit must never remove a head's calibration.
+    for target, cal in heads.items():
+        if target not in out_heads and isinstance(cal, dict):
+            out_heads[target] = cal
 
     result: dict[str, Any] = {
         "status": "ok",

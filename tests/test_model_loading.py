@@ -69,6 +69,24 @@ class TestModelLoading(unittest.TestCase):
             self.assertIn("explanation_method", rules)
             self.assertIn("directional_score", rules)
 
+    def test_a_move_model_is_explained_by_its_move_head(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            model_dir = root / "model_1"
+            model_dir.mkdir(parents=True)
+            (model_dir / "model.json").write_text(json.dumps({
+                "model_type": "baseline_dual",
+                "heads": {
+                    "move": {"weights": {"range_atr_14": 2.0}, "bias": 0.0},
+                    "pump": {"weights": {"ret_1": 5.0}, "bias": 0.0},
+                    "dump": {"weights": {"ret_1": -5.0}, "bias": 0.0},
+                },
+            }), encoding="utf-8")
+            sig = score_signal({"ts": 1, "symbol": "BTCUSDT", "ret_1": 0.5, "range_atr_14": 0.3}, root)
+            keys = [list(x.keys())[0] for x in sig.explanation.top_feature_impacts]
+            self.assertEqual(keys[0], "range_atr_14", "drivers came from the direction heads")
+            self.assertFalse(any(k.startswith(("pump_", "dump_")) for k in keys))
+
 
 
 if __name__ == "__main__":

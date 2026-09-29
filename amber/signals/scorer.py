@@ -84,6 +84,13 @@ def _top_impacts(
     top_n: int = 3,
 ) -> list[dict[str, float]]:
     contributions: dict[str, float] = {}
+    # Explain the head that decided. With a `move` head the alert means "price
+    # will travel the barrier", so its drivers are the move head's; pump/dump
+    # contributions would explain a direction call nobody made (roadmap D10).
+    if _has_head(model, "move"):
+        items = feature_contributions(model, feature_row, target="move").items()
+        ordered = sorted(items, key=lambda kv: abs(kv[1]), reverse=True)
+        return [{name: float(value)} for name, value in ordered[: max(1, top_n)]]
     for prefix, target in (("pump", "pump"), ("dump", "dump")):
         for name, value in feature_contributions(model, feature_row, target=target).items():
             contributions[f"{prefix}_{name}"] = float(value)

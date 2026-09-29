@@ -145,6 +145,11 @@ def scan_once(
     emitted = 0
     for _prob, signal in candidates:
         if gate.allow(signal):
+            # When the alert actually left, as opposed to the bar it describes:
+            # the pipeline and the scan each run once a minute, so an alert can
+            # reach the owner two to three minutes after its bar opened. The
+            # ledger enters after this moment, not after the bar.
+            signal.market_context["emitted_ms"] = int(time.time() * 1000)
             _append_signal(logs_root, signal)
             route_alert(signal, channels=alert_channels, limiter=alert_limiter)
             emitted += 1
@@ -188,7 +193,8 @@ def _scan_shadow(
         for row in shadow_candidates(feature_rows, rule, min_warmup=min_warmup, spread_max_bps=spread_max_bps):
             probe = SimpleNamespace(symbol=row["symbol"], event_ts=int(row["ts"]) / 1000.0)
             if gate.allow(probe):
-                append_shadow_signal(logs_root, row, rule, horizon_min=horizon, target_pct=target)
+                append_shadow_signal(logs_root, row, rule, horizon_min=horizon, target_pct=target,
+                                     emitted_ms=int(time.time() * 1000))
                 emitted += 1
         return emitted
     except Exception as exc:

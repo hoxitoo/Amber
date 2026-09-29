@@ -215,6 +215,17 @@ class TestScannerRanksBeforeGating(unittest.TestCase):
             )
             self.assertEqual(emitted, ["ZZZUSDT"], "slot went to the alphabet, not the model")
 
+    def test_emitted_alerts_carry_the_time_they_were_sent(self):
+        """The forward ledger enters after this moment, not after the bar."""
+        import json as _j
+        import time as _t
+
+        with tempfile.TemporaryDirectory() as td:
+            before = int(_t.time() * 1000)
+            self._run(Path(td), {"ZZZUSDT": 1.20}, limit=1)
+            rows = [_j.loads(x) for x in (Path(td) / "logs" / "signals.jsonl").read_text().splitlines()]
+            self.assertGreaterEqual(rows[0]["market_context"]["emitted_ms"], before)
+
 
 class TestOutcomeConfirmation(unittest.TestCase):
     """A movement signal graded on a pump-only outcome counts every correctly

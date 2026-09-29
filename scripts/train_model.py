@@ -13,8 +13,17 @@ if __name__ == "__main__":
     models_root = Path(config["storage"]["models_dir"])
     logs_root = Path(config["storage"]["logs_dir"])
 
+    from amber.common.locks import AlreadyRunning
+
     try:
         result = run_training(config, datasets_root, models_root, logs_root)
+    except AlreadyRunning:
+        print(
+            "Переобучение уже идёт (скорее всего, его запустил amber-pipeline по расписанию).\n"
+            "Второе параллельно не запускаю: вдвоём они не помещаются в память. Повтори через пару минут.",
+            file=sys.stderr,
+        )
+        raise SystemExit(3) from None
     except NotEnoughData as exc:
         print(
             "Недостаточно данных для обучения.\n"

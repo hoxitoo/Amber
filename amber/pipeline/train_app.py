@@ -61,8 +61,24 @@ def run_training(
     """Train + calibrate + evaluate + register the latest dataset.
 
     Raises NotEnoughData when the dataset is too small (callers decide whether
-    that is a hard error or an informational skip).
+    that is a hard error or an informational skip), and AlreadyRunning when
+    another retrain holds the models directory: the pipeline loop, the
+    dashboard's train button and scripts/train_model.py could otherwise run
+    two at once, at ~2.2 GB each on a 3.9 GB box.
     """
+    from amber.common.locks import SingleInstanceLock
+
+    Path(models_root).mkdir(parents=True, exist_ok=True)
+    with SingleInstanceLock(Path(models_root), "train"):
+        return _run_training(config, datasets_root, models_root, logs_root)
+
+
+def _run_training(
+    config: dict[str, Any],
+    datasets_root: Path,
+    models_root: Path,
+    logs_root: Path,
+) -> dict[str, Any]:
     try:
         rows, _run = load_latest_dataset_rows(datasets_root)
     except ValueError:
