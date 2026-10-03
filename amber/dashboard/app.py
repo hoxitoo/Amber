@@ -180,6 +180,7 @@ def _ledger_panel(summary: dict | None) -> None:
                 "стратегия": "по свече" if rule == "momentum" else "против свечи",
                 "сделок": r["trades"],
                 "эпизодов": r["episodes"],
+                "дней": s.get("days"),
                 "ход 1%": s["move_hit_rate"],
                 "выигрышей": r["win_rate"],
                 "средн., bps": None if r["mean_net"] is None else round(r["mean_net"] * 1e4, 1),
@@ -196,7 +197,8 @@ def _ledger_panel(summary: dict | None) -> None:
     )
     st.caption(
         f"Модель против правила ATR по частоте хода: **{_VERDICT_RU.get(summary['model_vs_rule'], '?')}**. "
-        f"Вывод выдаётся только от {summary['min_episodes']} независимых эпизодов: алерты в пределах "
+        f"Вывод выдаётся только от {summary['min_episodes']} независимых эпизодов за "
+        f"{summary.get('min_days', 7)}+ разных дней: алерты в пределах "
         "одного горизонта на любых монетах — один эпизод. «По свече» и «против свечи» — два механических "
         "правила, зафиксированных заранее; это бухгалтерия, Amber ордера не ставит."
     )

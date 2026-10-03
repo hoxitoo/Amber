@@ -69,6 +69,13 @@ DEFAULT_EXPIRE_HOURS = 6.0
 # Below this many independent episodes a verdict is not issued (section 11 of
 # CLAUDE.md). Higher than the analysis tools' 10 because this one decides money.
 MIN_EPISODES = 30
+# ...and they must span at least this many distinct UTC days. Measured on the
+# box 2026-10-03, the scanner alerts nearly continuously (~1 alert per 1.5 min
+# across both sources), so 30 episodes — clusters 15 minutes apart — arrive in
+# under a day, all from one market regime. Crypto regimes last days (roadmap
+# D3); a verdict needs more than one of them. Set before any outcome was read.
+MIN_DAYS = 7
+DAY_MS = 86_400_000
 # Ceiling on candles held per symbol per cycle: 3 days. Normally a cycle needs
 # ~80 (alerts wait ~17 minutes); this only binds after the pipeline was down
 # with alerts pending. Alerts older than it are written off as `no_data`, which
@@ -317,6 +324,7 @@ def summarize_ledger(
     logs_root: Path,
     *,
     min_episodes: int = MIN_EPISODES,
+    min_days: int = MIN_DAYS,
     since_ms: int | None = None,
 ) -> dict[str, Any]:
     """Per source: move hit rate, and each trading rule's net result per trade.
@@ -339,12 +347,14 @@ def summarize_ledger(
                 rows.append(r)
 
     z = family_z(len(SOURCES) * (1 + len(RULES)))
-    out: dict[str, Any] = {"z": z, "min_episodes": min_episodes, "sources": {}}
+    out: dict[str, Any] = {"z": z, "min_episodes": min_episodes, "min_days": min_days, "sources": {}}
     for source in SOURCES:
         mine = [r for r in rows if r.get("source") == source]
         ok = [r for r in mine if r.get("status") == "ok"]
         horizon = max((int(r.get("horizon", 15) or 15) for r in ok), default=15)
         eps = _episodes([r["event_ts"] for r in ok], horizon)
+        days = len({int(r["event_ts"]) // DAY_MS for r in ok})
+        enough_days = days >= min_days
         hits = sum(int(r.get("move_hit", 0)) for r in ok)
         hit_rate = hits / len(ok) if ok else None
         entry: dict[str, Any] = {
@@ -352,7 +362,8 @@ def summarize_ledger(
             "scored": len(ok),
             "skipped": {s: sum(1 for r in mine if r.get("status") == s) for s in ("gap", "no_bar", "no_data")},
             "episodes": eps,
-            "underpowered": eps < min_episodes,
+            "days": days,
+            "underpowered": eps < min_episodes or not enough_days,
             "move_hit_rate": hit_rate,
             "move_hit_rate_low": (
                 _wilson_low(int(round(hit_rate * eps)), eps, z) if ok and eps else None
@@ -365,7 +376,7 @@ def summarize_ledger(
             ep_means = _episode_means(ok, key, horizon)
             low = _mean_low(ep_means, z)
             mean = sum(traded) / len(traded) if traded else None
-            if len(ep_means) < min_episodes:
+            if len(ep_means) < min_episodes or not enough_days:
                 verdict = "underpowered"
             elif low is not None and low > 0:
                 verdict = "profitable"
@@ -405,13 +416,13 @@ def format_summary(summary: dict[str, Any]) -> str:
 
     lines = [
         f"Forward ledger — bounds at z={summary['z']:.2f}, verdicts need "
-        f">= {summary['min_episodes']} episodes",
+        f">= {summary['min_episodes']} episodes over >= {summary['min_days']} days",
         "",
-        f"{'source':<7} {'alerts':>6} {'scored':>6} {'episodes':>8} {'move hit':>9} {'(low)':>7}",
+        f"{'source':<7} {'alerts':>6} {'scored':>6} {'episodes':>8} {'days':>5} {'move hit':>9} {'(low)':>7}",
     ]
     for source, s in summary["sources"].items():
         lines.append(
-            f"{source:<7} {s['alerts']:>6} {s['scored']:>6} {s['episodes']:>8} "
+            f"{source:<7} {s['alerts']:>6} {s['scored']:>6} {s['episodes']:>8} {s['days']:>5} "
             f"{pct(s['move_hit_rate']):>9} {pct(s['move_hit_rate_low']):>7}"
         )
     lines += [

@@ -321,7 +321,7 @@ Every live evaluation so far lives in the test segment of a rolling window
 can: every live alert scored after its horizon and kept, with the net result of
 mechanical rules fixed in advance (momentum / fade, TP = SL = 1%, 15-bar
 timeout, 0.09% fees), next to the same ledger for `range_atr_14`. Freeze the
-code while it fills; decide at ≥30 episodes. Supersedes S4.2. Full plan:
+code while it fills; decide at ≥30 episodes over ≥7 days. Supersedes S4.2. Full plan:
 `CLAUDE.md` section 11.
 
 Audit 2026-09-29 (before the ledger starts, so it measures the system as

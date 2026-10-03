@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from amber.monitoring.ledger import (
+    MIN_DAYS,
     MIN_EPISODES,
     format_summary,
     resolve_alert,
@@ -251,7 +252,7 @@ class TestSummary(unittest.TestCase):
         logs = Path(tempfile.mkdtemp())
         for seed in range(20):
             rng.seed(seed)
-            _write_ledger(logs, _ledger_rows(200, gap_min=30, pnl=coin))
+            _write_ledger(logs, _ledger_rows(200, gap_min=60, pnl=coin))  # 8.3 days
             s = summarize_ledger(logs)["sources"]["model"]
             for rule in ("momentum", "fade"):
                 self.assertNotEqual(s["rules"][rule]["verdict"], "profitable", f"seed {seed} {rule}")
@@ -264,10 +265,21 @@ class TestSummary(unittest.TestCase):
             return g - COST, -g - COST
 
         logs = Path(tempfile.mkdtemp())
-        _write_ledger(logs, _ledger_rows(120, gap_min=30, pnl=edge))
+        _write_ledger(logs, _ledger_rows(120, gap_min=120, pnl=edge))  # 10 days
         s = summarize_ledger(logs)["sources"]["model"]
         self.assertEqual(s["rules"]["momentum"]["verdict"], "profitable")
         self.assertNotEqual(s["rules"]["fade"]["verdict"], "profitable")
+
+    def test_one_busy_day_is_not_enough_however_many_episodes(self):
+        """Live alerts arrive nearly continuously, so 30 episodes can come
+        from a single day and a single regime. A clear edge inside one day
+        must still read as underpowered."""
+        logs = Path(tempfile.mkdtemp())
+        _write_ledger(logs, _ledger_rows(90, gap_min=16, pnl=lambda e, k: (B - COST, -B - COST)))
+        s = summarize_ledger(logs)["sources"]["model"]
+        self.assertGreaterEqual(s["episodes"], MIN_EPISODES)
+        self.assertLess(s["days"], MIN_DAYS)  # 24 h from 22:13 UTC spans 2 calendar days
+        self.assertEqual(s["rules"]["momentum"]["verdict"], "underpowered")
 
     def test_simultaneous_alerts_are_one_episode(self):
         """27 symbols firing in one market lurch are one observation, not 27."""

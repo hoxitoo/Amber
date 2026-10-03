@@ -235,6 +235,20 @@ episode count, and what it does and does not show.
   has been running on uncalibrated move scores (latest calibration lacking a
   `move` head).
 
+- **2026-10-03** — all of the above deployed on the box (owner's log,
+  10:45-13:22 UTC). Measured: the ledger scores alerts every cycle, ~114 in
+  155 min across both sources (~1 per 1.4 min); the shadow rule refits each
+  retrain at `range_atr_14 >= 0.0053-0.0056`; the model fires on **3.4-4.5% of
+  test rows**, about 3-4x the ~1% (~400/day) the D4 operating point was set
+  for (inferred from 400 / (27 x 1440)) — left alone under the freeze, the
+  ledger measures it as it is. Rolling recalibration now covers move: 12:35
+  refit `move ECE 0.054 -> 0.009, bias +0.046 -> 0.000` (the model was
+  over-promising moves by 4.6 pp on fresh rows). Because alerts are near
+  continuous, 30 episodes would arrive in under a day from one regime, so the
+  verdict now also needs **7 distinct UTC days** (`ledger.MIN_DAYS`), set
+  before any ledger outcome was read. Not yet received: ledger report,
+  retrain memory peak on the box, `run_baseline_check.py`, move importance.
+
 ## 11. The plan to a profit test
 
 Proposed 2026-09-29. Why we have been circling: the only out-of-sample data is
@@ -264,8 +278,9 @@ thing that can say whether acting on alerts makes money.
 - **C. Freeze** code, features, labels and thresholds while the ledger fills.
   Hourly retraining continues (it is part of the system); `model_run_id`
   records which weights fired. Only bugs that change ledger numbers get fixed.
-- **D. Decide** at ≥30 independent episodes (rule 2 bounds, family-wise over
-  the rules compared): if a rule's net result has a lower bound above 0, the
+- **D. Decide** at ≥30 independent episodes spanning ≥7 distinct UTC days
+  (rule 2 bounds, family-wise over the rules compared; the day floor because
+  live alerts are near continuous and 30 episodes can come from one day): if a rule's net result has a lower bound above 0, the
   owner may test it with small size by hand — Amber still never places orders.
   If nothing clears it, say so plainly; the next options are roadmap D2
   (sub-minute data) or accepting Amber as a volatility indicator.
