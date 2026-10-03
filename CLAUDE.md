@@ -149,8 +149,10 @@ fences render as plain grey text.
 - Decision tools: `scripts/run_label_sweep.py`, `run_label_decomposition.py`,
   `run_operating_curve.py`, `run_baseline_check.py`, `run_ledger_report.py`.
   All read-only. The ledger report is the one that answers "does it pay".
-- As of 2026-09-29 the move model is statistically indistinguishable from the
-  one-feature rule `range_atr_14` (baseline check; details in section 10). Everything available on 1m
+- As of 2026-10 the move model is indistinguishable from one-feature rules
+  (`range_atr_14`, `bb_width_20`) in the baseline check AND in the forward
+  ledger (move hit 87.0% vs 87.4%); no fixed direction rule beats the fee
+  (section 10). Everything available on 1m
   bars says "a move is already under way"; see roadmap D2/D11.
 - `docs/target_review_2026-09.md` holds the reasoning behind the current target.
 
@@ -248,6 +250,27 @@ episode count, and what it does and does not show.
   verdict now also needs **7 distinct UTC days** (`ledger.MIN_DAYS`), set
   before any ledger outcome was read. Not yet received: ledger report,
   retrain memory peak on the box, `run_baseline_check.py`, move importance.
+
+- **2026-10 (4 days after the 2026-10-03 deploy)** — first full readings.
+  *Ledger* (4 days, so formally underpowered until 7): model 999 alerts / 131
+  episodes, rule 1188 / 135. Move hit rate **87.0% vs 87.4%** — model and
+  `range_atr_14` rule identical. Net per trade, bps (mean / family-wise
+  lower bound): model momentum -10.8 / -22.8, model fade -9.1 / -14.4, rule
+  momentum -8.6 / -17.5, rule fade -11.1 / -17.4; win rates 48-49%. Momentum
+  + fade ≈ -2 x cost (-19.9 and -19.7 vs -18), i.e. gross directional result
+  ≈ 0: a coin flip that pays the fee. Inferred, not yet the formal verdict:
+  with SE ≈ 5 bps no rule can reach a lower bound above 0 by day 7.
+  *Baseline check* (72h window, 0.71-day test segment): model precision
+  0.975 (20 episodes) vs `range_atr_14` 0.996 (13) and `bb_width_20` 1.000
+  (14); overlap with ATR 49%; verdict `matched_by:bb_width_20`.
+  *Importance, move head*: `range_atr_14` 79.6%; liquidation features
+  `liq_count_5` 0.47%, `liq_imbalance_15` -0.02%, `liq_share_5` -0.08% —
+  **liquidations add nothing measurable** (D2a closed, negative).
+  *Memory*: `systemctl status` shows 2.2 GB for amber-pipeline (cgroup
+  current, includes page cache; systemd here prints no peak). No OOM.
+  Conclusion: on 1m public bars Amber detects "a move is under way" exactly
+  as well as a one-line volatility rule, and neither fixed direction rule
+  makes money. Next step is the owner's choice (section 11, D).
 
 ## 11. The plan to a profit test
 

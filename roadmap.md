@@ -228,7 +228,12 @@ a known inaccuracy or dead end, not a feature wish.
       `range_atr_14`. *2026-09-29, after 48h of liquidations:* overlap 28%,
       0.922 vs 0.971, 8 episodes — still matched, and underpowered.
 
-- [~] **D2a — Forced liquidations. `COLLECTING — 48h result in, re-evaluate at the 72h window`**
+- [x] **D2a — Forced liquidations. `EVALUATED 2026-10 — NO MEASURABLE CONTRIBUTION`**
+      Move-head importance at the 72h window: `liq_count_5` 0.47%,
+      `liq_imbalance_15` -0.02%, `liq_share_5` -0.08% (`range_atr_14` 79.6%).
+      Baseline check: still `matched_by` (bb_width_20), overlap with ATR 49%.
+      Aggregated to the minute, liquidations arrive with the move, not before
+      it. Collection stays on (cheap); the features are candidates for D8.
       The cheapest of the leading inputs to test first: sparse (small disk
       cost), public (no API key — Amber holds none and needs none), and the one
       event in the feed that can precede a move rather than describe it. A
@@ -314,7 +319,11 @@ a known inaccuracy or dead end, not a feature wish.
       caps the universe near 100 symbols. Prerequisite for any expansion beyond
       the current 27.
 
-### Sprint 6 — forward ledger and profit test · **ledger built 2026-09-29, filling after deploy**
+### Sprint 6 — forward ledger and profit test · **filling; first 4 days read 2026-10**
+
+First 4 days: move hit 87.0% (model) vs 87.4% (rule); every fixed
+direction rule loses about the round-trip fee (-8.6 to -11.1 bps/trade,
+win 48-49%). Formal verdict at 7 days. Details: `CLAUDE.md` section 10.
 
 Every live evaluation so far lives in the test segment of a rolling window
 (7h, 18h from efdf724), so it can never accumulate evidence. The forward ledger
