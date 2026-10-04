@@ -307,6 +307,22 @@ episode count, and what it does and does not show.
   at 30 days x 27 symbols (1.3 GB of feature JSON): peak 491 MB, ~9 min, so
   one hourly retrain is skipped while it holds the lock. Re-run pending.
 
+- **2026-10-04, ignition run on 30 days** (182 h test segment): moves from
+  calm per arm 67 / 114 / 22 / 41 independent (30/15, 30/30, 60/15, 60/30).
+  30/30: model precision 0.162, lift 9.60, lift_lo 4.59 (162 alert episodes);
+  best single rule `+range_atr_14` lift 8.69, lift_lo 3.99 ->
+  `signal_matched_by:range_atr_14`. 30/15: rule only (lift_lo 2.30). 60/30:
+  matched by `-dist_to_high_20`. 60/15: nothing. Model factors: range_atr_14
+  65%, spread 14%, bb_width 8%; OI, funding, flow, liquidations near zero.
+  Reading: a real, family-wise-significant effect, but the "precursor" is
+  `range_atr_14` = mean candle high-low, while "calm" was judged on per-minute
+  bid/ask mid snapshots. Flat snapshots over swinging candles is volatility
+  already under way — the same signal the live model uses — not a warning
+  before the move. Fixed the definition: every 20-bar slice of the window must
+  also have a candle high-low range < 0.5% (recovered exactly from
+  dist_to_high_20 / dist_to_low_20). Re-run pending; that run is the clean
+  answer to the owner's question.
+
 ## 11. The plan to a profit test
 
 Proposed 2026-09-29. Why we have been circling: the only out-of-sample data is
@@ -344,8 +360,9 @@ thing that can say whether acting on alerts makes money.
   (sub-minute data) or accepting Amber as a volatility indicator.
 - **E. Ignition check** (2026-10-04, after the first ledger readings showed no
   edge and the owner ruled out "volatility indicator"): can a move be
-  predicted from a CALM market (30/60-bar range < 0.5% and last 5 bars <
-  0.1%), 1% within 15/30 bars, entry the bar after? `amber/backtest/ignition.py`.
+  predicted from a CALM market (30/60-bar mid range < 0.5%, last 5 bars <
+  0.1%, and candle high-low < 0.5% over every 20-bar slice), 1% within 15/30
+  bars, entry the bar after? `amber/backtest/ignition.py`.
   Verdict routes the next step: `precursor_found` / `signal_matched_by` ->
   retarget the scanner to ignition (the product the owner described);
   `no_precursor` -> 1m public bars cannot give early warning, D2 (order book,

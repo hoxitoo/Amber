@@ -40,11 +40,17 @@ def _write_market(root: Path, *, seed: int, planted: bool, symbols: int = 6, n: 
                 drift[b + k] = sign * 0.002
             warn[b - 1] = warn[b] = True
         price = 100.0
+        recent: list[float] = []
         with (d / "part-000.jsonl").open("w") as fh:
             for i in range(n):
                 ret = rng.gauss(0, 0.0003) + drift[i]
                 price *= 1 + ret
+                recent = (recent + [price])[-20:]
                 row = {name: rng.gauss(0, 1) for name in MODEL_FEATURES}
+                # Candle geometry consistent with the price path (no wicks),
+                # so the candle filter agrees with the mid filter here.
+                row["dist_to_high_20"] = price / max(recent) - 1
+                row["dist_to_low_20"] = price / min(recent) - 1
                 if planted and warn[i]:
                     row["oi_roc_5"] = 4.0 + rng.random()
                 row.update({"ts": 1_700_000_000_000 + i * 60_000, "mid_price": price, "ret_1": ret,
@@ -115,6 +121,19 @@ class TestCalmFilter(unittest.TestCase):
         # Bar 100 lies in the lookback or forward window of rows 84..129.
         self.assertFalse(any(84 * 60_000 <= r["ts"] <= 129 * 60_000 for r in rows))
         self.assertTrue(any(r["ts"] < 84 * 60_000 for r in rows))
+
+    def test_flat_minute_prices_over_swinging_candles_are_not_calm(self):
+        """The 30-day live run: minute mid snapshots flat, candles swinging
+        0.8% inside the minute. range_atr_14 then 'predicted' the move,
+        which was volatility already under way."""
+        prices = [100.0] * 200
+        series = self._series(prices)
+        # Wicks on bars 90..99; every 20-bar range ending on 90..118 holds them.
+        for r in series["A"].rows[90:119]:
+            r["dist_to_high_20"], r["dist_to_low_20"] = -0.004, 0.004
+        rows, _ = build_ignition_rows(series, window=30, horizon=15)
+        self.assertFalse(any(90 * 60_000 <= r["ts"] <= 119 * 60_000 for r in rows))
+        self.assertTrue(any(r["ts"] == 130 * 60_000 for r in rows))
 
     def test_the_first_bars_of_a_move_are_not_calm(self):
         """A 0.2% first bar fits inside the 0.5% window range; it must still

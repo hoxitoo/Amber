@@ -10,7 +10,8 @@ the next minutes, with what probability, and why?"
 
 This tool asks that question directly, on the data already collected. It
 keeps only bars where price has been CALM — its range over the last `window`
-bars is under `calm_pct` and over the last 5 bars under a fifth of that — so "already moving" is excluded by construction and
+bars is under `calm_pct` and over the last 5 bars under a fifth of that, AND
+its candles' high-low range over every 20-bar slice is under `calm_pct` — so "already moving" is excluded by construction and
 volatility-now cannot answer it. On those rows it labels whether price then
 travels `barrier` (either way) within `horizon` bars, entering on the bar
 AFTER the alert bar (an alert is only seen once its bar closes). A model is
@@ -80,6 +81,13 @@ DEFAULT_CALM_PCT = 0.005
 # before any live run.
 RECENT_BARS = 5
 RECENT_FRACTION = 0.2
+# ...and the CANDLES must be calm too, not just the per-minute mid snapshots:
+# every 20-bar slice of the window must have a high-low range under calm_pct.
+# Added after the 30-day live run (2026-10-04): with the mid-only filter the
+# winning "precursor" was range_atr_14 — the average candle high-low — i.e.
+# price whipping inside each minute while the minute snapshots stayed flat.
+# That is volatility already under way, not a warning before it.
+CANDLE_SLICE = 20
 DEFAULT_BARRIER = 0.010
 # 1% of calm test rows. Calm rows are a subset, so this is fewer alerts than
 # the live scanner fires.
@@ -96,6 +104,20 @@ _VERDICT_RANK = {
 }
 
 
+def candle_range_20(row: dict[str, Any]) -> float:
+    """High-low range of the last 20 candles over the close, recovered exactly
+    from the feature row: dist_to_high_20 = close/max_high - 1 and
+    dist_to_low_20 = close/min_low - 1. Infinite when the row cannot say."""
+    try:
+        dhi = float(row.get("dist_to_high_20"))
+        dlo = float(row.get("dist_to_low_20"))
+    except (TypeError, ValueError):
+        return float("inf")
+    if 1.0 + dhi <= 0 or 1.0 + dlo <= 0:
+        return float("inf")
+    return max(0.0, 1.0 / (1.0 + dhi) - 1.0 / (1.0 + dlo))
+
+
 def _calm_labels(
     prices: Sequence[float],
     synthetic: Sequence[bool],
@@ -105,6 +127,7 @@ def _calm_labels(
     horizon: int,
     calm_pct: float,
     barrier: float,
+    candle_ranges: Sequence[float] | None = None,
 ) -> tuple[list[tuple[int, int, int, int]], int]:
     """(i, move_hit, up_hit, down_hit) for every calm candidate, plus how many
     candidates had a full window either side.
@@ -133,6 +156,12 @@ def _calm_labels(
         recent = prices[max(lo, i - RECENT_BARS + 1) : i + 1]
         if (max(recent) - min(recent)) / p_now > calm_pct * RECENT_FRACTION:
             continue  # the move may have begun on the last few bars
+        if candle_ranges is not None:
+            # 20-bar slices ending at i, i-20, ... and one ending at the
+            # window's start + 19, so together they cover every bar of it.
+            ends = set(range(i, lo + CANDLE_SLICE - 2, -CANDLE_SLICE)) | {lo + CANDLE_SLICE - 1}
+            if any(candle_ranges[e] >= calm_pct for e in ends if 0 <= e <= i):
+                continue  # candles were swinging inside the minute: not calm
         labels = label_path(prices[i + 1 : hi + 1], up_pct=barrier, down_pct=barrier, shape="one_sided")
         up, down = int(labels["up_hit"]), int(labels["down_hit"])
         out.append((i, int(bool(up or down)), up, down))
@@ -152,8 +181,10 @@ def build_ignition_rows(
     considered = 0
     for symbol, series in series_by_symbol.items():
         synthetic = [bool(r.get("is_synthetic", False)) for r in series.rows]
+        ranges = [candle_range_20(r) for r in series.rows]
         labelled, c = _calm_labels(series.prices, synthetic, series.clean_idx, window=window,
-                                   horizon=horizon, calm_pct=calm_pct, barrier=barrier)
+                                   horizon=horizon, calm_pct=calm_pct, barrier=barrier,
+                                   candle_ranges=ranges)
         considered += c
         for i, move, up, down in labelled:
             src = series.rows[i]
@@ -214,6 +245,7 @@ def collect_arms(
         symbols += 1
         prices = [float(r.get("mid_price", 0.0) or 0.0) for r in rows]
         synthetic = [bool(r.get("is_synthetic", False)) for r in rows]
+        ranges = [candle_range_20(r) for r in rows]
         start = max(0, len(rows) - max_candles_per_symbol)
         candidates = [
             i for i in range(start, len(rows))
@@ -221,14 +253,15 @@ def collect_arms(
         ]
         for arm in arms:
             labelled, considered = _calm_labels(prices, synthetic, candidates, window=arm.window,
-                                                horizon=arm.horizon, calm_pct=calm_pct, barrier=barrier)
+                                                horizon=arm.horizon, calm_pct=calm_pct, barrier=barrier,
+                                                candle_ranges=ranges)
             arm.considered += considered
             for i, move, _up, _down in labelled:
                 src = rows[i]
                 arm.x.extend(float(src.get(name, 0.0) or 0.0) for name in MODEL_FEATURES)
                 arm.y.append(move)
                 arm.ts.append(int(src.get("ts", 0) or 0))
-        del rows, prices, synthetic
+        del rows, prices, synthetic, ranges
     return arms, symbols
 
 
@@ -432,7 +465,7 @@ def format_report(report: dict[str, Any]) -> str:
         return "-" if v is None else spec.format(v)
 
     lines = [
-        f"Зарождение движения: тишина (диапазон < {report['calm_pct'] * 100:.1f}% за окно) "
+        f"Зарождение движения: тишина (цена и свечи high-low < {report['calm_pct'] * 100:.1f}% за окно) "
         f"→ ход ≥{report['barrier'] * 100:.1f}% в любую сторону, вход со следующей свечи",
         f"{report['symbols']} символов · история {report.get('span_days', 0):.1f} дн · бюджет "
         f"{report['budget'] * 100:.1f}% тихих строк теста · z={report['z']:.2f} (поправка на все сравнения)",
