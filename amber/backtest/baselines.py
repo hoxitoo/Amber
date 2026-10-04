@@ -38,7 +38,7 @@ import random
 from pathlib import Path
 from typing import Any, Sequence
 
-from amber.backtest.label_sweep import _episodes, _wilson_low, family_z
+from amber.backtest.label_sweep import _episodes, clustered_low, family_z
 from amber.backtest.operating_point import _label, LABEL_KEYS
 
 logger = logging.getLogger(__name__)
@@ -98,7 +98,7 @@ def _measure(
     hits = sum(labels[i] for i in chosen)
     precision = hits / take if take else 0.0
     eps = _episodes([ts[i] for i in chosen], horizon)
-    low = _wilson_low(int(round(precision * eps)), eps, z) if eps else 0.0
+    low = clustered_low(precision, eps, z)
     return {
         "alerts": take,
         "precision": precision,

@@ -341,6 +341,14 @@ alert could be seen; and nothing stopped the dashboard or a reboot-reused PID
 from duplicating or blocking a service. All fixed with tests that fail on the
 previous code; details in `CLAUDE.md` sections 1 and 10.
 
+### Sprint 7 — warn before the move · **check built 2026-10-04, awaiting a live run**
+
+The owner's purpose is "calm now, P = x% of a sharp move soon, because of
+...", not "moving now". `scripts/run_ignition_check.py` asks exactly that on
+the collected data: calm bars only, 1% move within 15/30 bars, model vs every
+single feature, exact family-wise bounds. Its verdict decides between
+retargeting the scanner to ignition and D2 (sub-minute data).
+
 ### Backlog
 - [ ] T6 cross-exchange lead/lag features · A7 feature-list relocation.
 - [ ] Universe expansion to 100–200 symbols. Measured ceilings: memory ~50

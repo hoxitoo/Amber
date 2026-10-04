@@ -246,6 +246,38 @@ def _wilson_low(hits: int, n: int, z: float = 1.96) -> float:
     return max(0.0, (centre - margin) / d)
 
 
+def clustered_low(rate: float, episodes: int, z: float = 1.96) -> float:
+    """Exact (Clopper-Pearson) lower bound for an observed `rate` when only
+    `episodes` of the observations are independent, one-sided at the level `z`
+    stands for.
+
+    Two fixes, both found on a null fixture on 2026-10-04, where a feature of
+    pure noise was declared a precursor:
+
+    - Callers rounded `rate * episodes` to whole hits first. Rounding up
+      inflated it: 2 hits in 15 alerts over 12 episodes became 2 of 12, and the
+      "clustered" bound came out ABOVE the naive one (lift 1.84 vs 1.47).
+      The rate is now used as measured; fractional hits are fine for the
+      Beta quantile.
+    - The Wilson interval under-covers when hits are few and the rate is
+      small — exactly a rare-event alert list. 2 hits in 15 at a 1.2% base
+      rate gave a Wilson lower bound of lift 1.47 at z = 3.48; the exact bound
+      is ~0.14. Among 197 comparisons that is one lucky draw, not evidence.
+      At large counts (the ledger's 87% over 131 episodes) the two agree.
+    """
+    if episodes <= 0:
+        return 0.0
+    from scipy.stats import beta, norm
+
+    p = min(1.0, max(0.0, float(rate)))
+    n = float(episodes)
+    k = p * n
+    if k <= 0:
+        return 0.0
+    alpha = float(norm.sf(z))
+    return float(beta.ppf(alpha, k, n - k + 1.0))
+
+
 def _episodes(timestamps: list[int], horizon: int, step_ms: int = 60_000) -> int:
     """Independent market episodes among a set of alerts.
 
@@ -297,15 +329,16 @@ def _precision_at_budget(
     hits = sum(labels[i] for i in order)
     base = sum(labels) / n
     precision = hits / take
-    low = _wilson_low(hits, take, z)
+    # Exact, like the clustered bound below, so the two differ only by the
+    # number of independent observations, never by method.
+    low = clustered_low(precision, take, z)
 
     # The same bound recomputed on episodes rather than alerts. This is the one
     # the verdict uses: 117 alerts drawn from 5 market lurches carry about as
     # much evidence as 5 observations, and the naive interval would be wrong by
     # a factor of five.
     eps = _episodes([timestamps[i] for i in order], horizon)
-    eps_hits = int(round(precision * eps))
-    low_clustered = _wilson_low(eps_hits, eps, z) if eps > 0 else 0.0
+    low_clustered = clustered_low(precision, eps, z)
     return {
         "precision": precision,
         "precision_ci_low": low,

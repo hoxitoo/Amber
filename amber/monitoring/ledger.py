@@ -49,7 +49,7 @@ from pathlib import Path
 import time
 from typing import Any
 
-from amber.backtest.label_sweep import _episodes, _wilson_low, family_z
+from amber.backtest.label_sweep import _episodes, clustered_low, family_z
 from amber.monitoring.quality_report import _CandleIndex, _event_ts_ms
 
 logger = logging.getLogger(__name__)
@@ -366,7 +366,7 @@ def summarize_ledger(
             "underpowered": eps < min_episodes or not enough_days,
             "move_hit_rate": hit_rate,
             "move_hit_rate_low": (
-                _wilson_low(int(round(hit_rate * eps)), eps, z) if ok and eps else None
+                clustered_low(hit_rate, eps, z) if ok and eps else None
             ),
             "rules": {},
         }

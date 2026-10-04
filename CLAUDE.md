@@ -52,9 +52,16 @@ per-arm 95% bounds it still said `edge_survives_lag` at 24 arms; the baseline
 check said `model_adds_signal` on a difference of **one alert in 103**.
 
 - Every "better / worse / edge / no edge" claim uses the episode-clustered lower
-  bound (`_episodes`, `_wilson_low`) with a family-wise correction
+  bound (`_episodes`, `clustered_low`) with a family-wise correction
   (`family_z(n_compared)`). Alerts within one horizon of each other, on any
   symbol, are one observation.
+- `clustered_low` is exact (Clopper-Pearson) on the measured rate. Until
+  2026-10-04 every tool rounded `rate x episodes` to whole hits (rounding up
+  made the clustered bound exceed the naive one) and used Wilson, which
+  under-covers at a few hits on a rare base rate: 2 hits in 15 at 1.2% read as
+  lift_lo 1.47, exact ~0.14. Both found when a null fixture "found" a
+  precursor in a column of pure noise. Never round hits; never use Wilson for
+  a verdict on a handful of hits.
 - A winner must clear the loser's *achieved* value with its *lower bound*.
   Otherwise the answer is "indistinguishable", and I say so.
 - State the episode count next to every precision. Under ~10 episodes, say the
@@ -272,6 +279,21 @@ episode count, and what it does and does not show.
   as well as a one-line volatility rule, and neither fixed direction rule
   makes money. Next step is the owner's choice (section 11, D).
 
+- **2026-10-04** — the owner rejected "Amber as a volatility indicator": the
+  purpose is "price is calm now; P = x% of a sharp move soon, because of
+  factors ...", i.e. warning BEFORE the move. The breakout-rule ledger idea
+  was not built: it measures trading after a move starts, which is not that
+  purpose. Built instead: `scripts/run_ignition_check.py` (read-only), which
+  keeps only calm bars and asks whether anything predicts a 1% move from
+  there (section 11, E). Validated: 10/10 null markets and 3 production-size
+  nulls -> `no_precursor`; 5/5 planted -> found and named. Measured here at
+  production size: peak 651 MB, ~12 s; it holds the retrain lock so the two
+  never run together. The same validation exposed the bound bugs in rule 2;
+  fixed in all four tools. Effect on earlier live results: bounds can only
+  get stricter, so "matched_by" baseline verdicts stand; the 09-06 label
+  sweep ranking and the 09-08 operating point (9.55) were chosen with the
+  old bounds and have not been re-run (frozen; re-run before relying on them).
+
 ## 11. The plan to a profit test
 
 Proposed 2026-09-29. Why we have been circling: the only out-of-sample data is
@@ -307,3 +329,11 @@ thing that can say whether acting on alerts makes money.
   owner may test it with small size by hand — Amber still never places orders.
   If nothing clears it, say so plainly; the next options are roadmap D2
   (sub-minute data) or accepting Amber as a volatility indicator.
+- **E. Ignition check** (2026-10-04, after the first ledger readings showed no
+  edge and the owner ruled out "volatility indicator"): can a move be
+  predicted from a CALM market (30/60-bar range < 0.5% and last 5 bars <
+  0.1%), 1% within 15/30 bars, entry the bar after? `amber/backtest/ignition.py`.
+  Verdict routes the next step: `precursor_found` / `signal_matched_by` ->
+  retarget the scanner to ignition (the product the owner described);
+  `no_precursor` -> 1m public bars cannot give early warning, D2 (order book,
+  tick flow) is the only route; `underpowered` -> wait for more calm history.

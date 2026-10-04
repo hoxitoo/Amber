@@ -24,7 +24,7 @@ import logging
 from pathlib import Path
 from typing import Any, Sequence
 
-from amber.backtest.label_sweep import _episodes, _wilson_low, family_z
+from amber.backtest.label_sweep import _episodes, clustered_low, family_z
 from amber.labeling.events import move_label
 
 logger = logging.getLogger(__name__)
@@ -126,7 +126,7 @@ def operating_curve(
         precision = hits / take
         threshold = probs[chosen[-1]]
         eps = _episodes([ts[i] for i in chosen], horizon)
-        low_clustered = _wilson_low(int(round(precision * eps)), eps, z) if eps else 0.0
+        low_clustered = clustered_low(precision, eps, z)
         points.append({
             "status": "ok",
             "alerts_per_day": rate,
