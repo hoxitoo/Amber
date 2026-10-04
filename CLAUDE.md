@@ -294,6 +294,19 @@ episode count, and what it does and does not show.
   sweep ranking and the 09-08 operating point (9.55) were chosen with the
   old bounds and have not been re-run (frozen; re-run before relying on them).
 
+- **2026-10-04, first live ignition run** (72h window): calm share 23-30% of
+  bars; base rate of a 1% move from calm **0.000-0.005** (≈1 in 1000 calm
+  minutes at 30/15). All four arms printed `no_precursor` — **wrong reading,
+  my tool's fault**: the 18 h test segment held only ~10 such moves, too few
+  to exclude anything but a very strong precursor; the gate counted alert
+  episodes, not events to predict. Point lifts (11.8, 4.9, 5.9) on 1-2 hits
+  are noise; the printed factor table (sums > 100%) was noise too. Fixed:
+  `underpowered` unless ≥20 independent moves in the test segment, factors
+  shown only with a proven signal, and `--days` (default 30) reads history
+  far beyond the training window from compact float32 arrays. Measured here
+  at 30 days x 27 symbols (1.3 GB of feature JSON): peak 491 MB, ~9 min, so
+  one hourly retrain is skipped while it holds the lock. Re-run pending.
+
 ## 11. The plan to a profit test
 
 Proposed 2026-09-29. Why we have been circling: the only out-of-sample data is
@@ -337,3 +350,6 @@ thing that can say whether acting on alerts makes money.
   retarget the scanner to ignition (the product the owner described);
   `no_precursor` -> 1m public bars cannot give early warning, D2 (order book,
   tick flow) is the only route; `underpowered` -> wait for more calm history.
+  A verdict needs ≥20 independent moves in the test segment
+  (`ignition.MIN_POSITIVE_EPISODES`); run with `--days 30` or more, because a
+  1% move from calm is a ~1-in-1000-minutes event.

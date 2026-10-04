@@ -19,7 +19,8 @@ from amber.models.features import MODEL_FEATURES
 POSITIVE = ("precursor_found", "signal_matched_by", "single_feature_signal")
 
 
-def _write_market(root: Path, *, seed: int, planted: bool, symbols: int = 6, n: int = 3000) -> Path:
+def _write_market(root: Path, *, seed: int, planted: bool, symbols: int = 6, n: int = 6000,
+                  burst_p: float = 0.004) -> Path:
     """Quiet random walks with sudden 2% bursts in a random direction.
 
     With `planted`, `oi_roc_5` jumps two bars before each burst starts and
@@ -30,7 +31,7 @@ def _write_market(root: Path, *, seed: int, planted: bool, symbols: int = 6, n: 
     for s in range(symbols):
         d = root / "features" / f"S{s:02d}USDT"
         d.mkdir(parents=True)
-        starts = {i for i in range(80, n - 40) if rng.random() < 0.004}
+        starts = {i for i in range(80, n - 40) if rng.random() < burst_p}
         drift = [0.0] * n
         warn = [False] * n
         for b in starts:
@@ -52,9 +53,9 @@ def _write_market(root: Path, *, seed: int, planted: bool, symbols: int = 6, n: 
     return root
 
 
-def _run(planted: bool, seed: int) -> dict:
+def _run(planted: bool, seed: int, **kw) -> dict:
     with tempfile.TemporaryDirectory() as td:
-        root = _write_market(Path(td), seed=seed, planted=planted)
+        root = _write_market(Path(td), seed=seed, planted=planted, **kw)
         return run_ignition_check(root, max_candles_per_symbol=0, min_warmup_bars=60)
 
 
@@ -65,6 +66,16 @@ class TestIgnitionOnKnownAnswers(unittest.TestCase):
             self.assertEqual(len(rep["arms"]), 4)
             for arm in rep["arms"]:
                 self.assertNotIn(arm.get("verdict", "").split(":")[0], POSITIVE, f"seed {seed}: {arm}")
+
+    def test_too_few_moves_is_underpowered_not_no_precursor(self):
+        """The first live run: ~10 moves in the test segment read as
+        `no_precursor`. Even a planted precursor cannot be shown on that few,
+        so the honest answer is underpowered."""
+        rep = _run(planted=True, seed=1, burst_p=0.0004)
+        for arm in rep["arms"]:
+            if arm.get("status") == "ok":
+                self.assertLess(arm["positive_episodes"], 20)
+                self.assertEqual(arm["verdict"], "underpowered", format_report(rep))
 
     def test_a_planted_precursor_is_found_and_named(self):
         rep = _run(planted=True, seed=1)

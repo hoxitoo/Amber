@@ -8,6 +8,7 @@ Holds the retrain lock while it runs, so the hourly retrain skips one cycle
 instead of running beside it: both at once do not fit in the box's memory.
 
     python scripts/run_ignition_check.py
+    python scripts/run_ignition_check.py --days 45
 """
 
 from __future__ import annotations
@@ -41,7 +42,10 @@ def main() -> int:
         print(problem, file=sys.stderr)
         return 1
 
-    argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter).parse_args()
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--days", type=float, default=30.0,
+                    help="history to read per symbol (default 30; memory measured at 30)")
+    args = ap.parse_args()
     root = enter_project_root(__file__)
     config = ConfigLoader(root).load_yaml("config/amber.yaml")
     setup_logging(config.get("run", {}).get("log_level", "INFO"))
@@ -58,7 +62,10 @@ def main() -> int:
         with SingleInstanceLock(models_root, "train"):
             report = run_ignition_check(
                 Path(storage["features_dir"]),
-                max_candles_per_symbol=int(labeling.get("max_candles_per_symbol", 4320)),
+                # Far longer than the 72h training window on purpose: moves
+                # from a calm market are rare, and the window's test segment
+                # held only ~10 of them (first live run, 2026-10-04).
+                max_candles_per_symbol=int(args.days * 1440),
                 min_warmup_bars=int(labeling.get("min_warmup_bars", 60)),
                 train_frac=float(split.get("train_frac", 0.6)),
                 calib_frac=float(split.get("calib_frac", 0.15)),
