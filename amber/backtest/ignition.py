@@ -45,6 +45,12 @@ over everything compared (arms x (model + every rule)), so ranking 4 arms and
   them, and the tool printed `no_precursor` when the honest reading was "too
   few events to tell". Ten events can only reveal a very strong precursor.
 
+The feature set is the live model's plus two families added 2026-10-06,
+after the 1m features showed only coin choice: BTC/ETH lead (has the market
+leader just moved?) and hour-scale build-up (compression, volume). Arms are
+pre-registered in DEFAULT_ARMS, including a liquid/thin split by spread and a
+6-hour-calm -> 4-hour-move question.
+
 Because the events are rare, this check reads far more history than the
 training window (`--days`, 30 by default), held as compact float32 arrays —
 dict rows for 30 days x 27 symbols would not fit the box.
@@ -55,6 +61,8 @@ Read-only: trains in memory, writes only logs/ignition_check.json.
 from __future__ import annotations
 
 from array import array
+from collections import deque
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 import logging
@@ -99,7 +107,44 @@ DEFAULT_BARRIER = 0.010
 # the live scanner fires.
 DEFAULT_BUDGET = 0.01
 DEFAULT_DAYS = 30
-_N_FEATURES = len(MODEL_FEATURES)
+
+# Added 2026-10-06, when the 1m model features gave only coin choice
+# (`coin_choice_only`). Both families are built from data already on disk.
+#
+# Market lead: alts often move seconds to minutes AFTER BTC/ETH. "BTC just
+# moved, this coin is still calm" is a genuine timing signal if it exists.
+LEAD_FEATURES = ("btc_absret_1", "btc_absret_5", "btc_range_atr_14", "eth_absret_5")
+# Hour scale: compression and volume build-up over hours, the scale where
+# positions are said to be accumulated before a move.
+HOUR_FEATURES = ("hr_range_240", "hr_compress_240_1440", "hr_absret_240", "hr_notional_60_1440")
+FEATURES = tuple(MODEL_FEATURES) + LEAD_FEATURES + HOUR_FEATURES
+_N_FEATURES = len(FEATURES)
+_HOUR_CONTEXT = 1440
+
+
+@dataclass(frozen=True)
+class ArmSpec:
+    """One pre-registered question: calm for `window` bars (range under
+    `calm_pct`) -> a `barrier` move within `horizon` bars, evaluated on each
+    coin group in `groups` ("all", "liquid", "thin")."""
+
+    name: str
+    window: int
+    horizon: int
+    calm_pct: float
+    barrier: float
+    groups: tuple[str, ...] = ("all",)
+
+
+# Fixed 2026-10-06 before the run they were added for. The 15-bar horizons of
+# the first runs are dropped: on 30 days they held 17-44 moves, under or near
+# the floor, and every extra arm raises the bar for all of them.
+DEFAULT_ARMS = (
+    ArmSpec("m30", 30, 30, DEFAULT_CALM_PCT, DEFAULT_BARRIER, ("all", "liquid", "thin")),
+    ArmSpec("m60", 60, 30, DEFAULT_CALM_PCT, DEFAULT_BARRIER),
+    # Calm for 6 hours (range < 1.5%) -> a 3% move within 4 hours.
+    ArmSpec("h6", 360, 240, 0.015, 0.03),
+)
 
 _VERDICT_RANK = {
     "timing_signal": 6,
@@ -176,6 +221,84 @@ def _calm_labels(
     return out, considered
 
 
+def _rolling(values: Sequence[float], window: int, take_max: bool) -> list[float]:
+    """out[i] = max (or min) of values[max(0, i-window+1) : i+1], in O(n)."""
+    out: list[float] = []
+    q: deque[int] = deque()
+    for i, v in enumerate(values):
+        while q and ((values[q[-1]] <= v) if take_max else (values[q[-1]] >= v)):
+            q.pop()
+        q.append(i)
+        if q[0] <= i - window:
+            q.popleft()
+        out.append(values[q[0]])
+    return out
+
+
+class _Rolling:
+    """Rolling max/min of one price series, computed once per window."""
+
+    def __init__(self, prices: Sequence[float]) -> None:
+        self.prices = prices
+        self._cache: dict[tuple[int, bool], list[float]] = {}
+
+    def get(self, window: int, take_max: bool) -> list[float]:
+        key = (window, take_max)
+        if key not in self._cache:
+            self._cache[key] = _rolling(self.prices, window, take_max)
+        return self._cache[key]
+
+
+def _calm_labels_fast(
+    roll: _Rolling,
+    synthetic_prefix: Sequence[int],
+    candidates: Sequence[int],
+    *,
+    window: int,
+    horizon: int,
+    calm_pct: float,
+    barrier: float,
+    candle_ranges: Sequence[float],
+) -> tuple[list[tuple[int, int, int, int]], int]:
+    """Same result as `_calm_labels`, with every window looked up in O(1).
+
+    The row-by-row version slices the window for each bar, which is fine at
+    30-60 bars and takes about an hour at the 6-hour arm. A test pins the two
+    to identical output on random series with gaps and wicks.
+    """
+    assert window >= RECENT_BARS
+    prices = roll.prices
+    n = len(prices)
+    pmax, pmin = roll.get(window, True), roll.get(window, False)
+    rmax, rmin = roll.get(RECENT_BARS, True), roll.get(RECENT_BARS, False)
+    fmax, fmin = roll.get(horizon, True), roll.get(horizon, False)
+    out: list[tuple[int, int, int, int]] = []
+    considered = 0
+    for i in candidates:
+        lo, hi = i - window + 1, i + 1 + horizon
+        if lo < 0 or hi >= n:
+            continue
+        considered += 1
+        if synthetic_prefix[hi + 1] - synthetic_prefix[lo] > 0:
+            continue
+        p_now = prices[i]
+        if p_now <= 0 or pmin[i] <= 0:
+            continue
+        if (pmax[i] - pmin[i]) / p_now > calm_pct:
+            continue
+        if (rmax[i] - rmin[i]) / p_now > calm_pct * RECENT_FRACTION:
+            continue
+        ends = set(range(i, lo + CANDLE_SLICE - 2, -CANDLE_SLICE)) | {lo + CANDLE_SLICE - 1}
+        if any(candle_ranges[e] >= calm_pct for e in ends if 0 <= e <= i):
+            continue
+        entry = prices[i + 1]
+        # Bars i+2 .. i+1+horizon, measured from the entry bar, as label_path.
+        up = int(fmax[hi] >= entry * (1.0 + barrier))
+        down = int(fmin[hi] <= entry * (1.0 - barrier))
+        out.append((i, int(bool(up or down)), up, down))
+    return out, considered
+
+
 def build_ignition_rows(
     series_by_symbol: dict[str, _Series],
     *,
@@ -205,10 +328,11 @@ def build_ignition_rows(
 
 
 class _Arm:
-    """Calm rows for one (window, horizon), as compact arrays."""
+    """Calm rows for one ArmSpec, as compact arrays."""
 
-    def __init__(self, window: int, horizon: int) -> None:
-        self.window, self.horizon = window, horizon
+    def __init__(self, spec: ArmSpec) -> None:
+        self.spec = spec
+        self.window, self.horizon = spec.window, spec.horizon
         self.x = array("f")  # row-major, _N_FEATURES per row
         self.y = array("b")
         self.ts = array("q")
@@ -228,51 +352,109 @@ def _load_symbol(symbol_dir: Path, want: int) -> list[dict[str, Any]]:
     return rows
 
 
+def _lead_table(features_dir: Path, symbol: str, want: int) -> dict[int, tuple[float, float, float]]:
+    """ts -> (|ret 1 bar|, |ret 5 bars|, range_atr_14) for a market leader."""
+    d = features_dir / symbol
+    if not d.is_dir():
+        return {}
+    rows = _load_symbol(d, want)
+    prices = [float(r.get("mid_price", 0.0) or 0.0) for r in rows]
+    out: dict[int, tuple[float, float, float]] = {}
+    for i, r in enumerate(rows):
+        p = prices[i]
+        a1 = abs(p / prices[i - 1] - 1.0) if i >= 1 and prices[i - 1] > 0 else 0.0
+        a5 = abs(p / prices[i - 5] - 1.0) if i >= 5 and prices[i - 5] > 0 else 0.0
+        out[int(r.get("ts", 0) or 0)] = (a1, a5, float(r.get("range_atr_14", 0.0) or 0.0))
+    return out
+
+
+def _hour_features(prices: Sequence[float], notional: Sequence[float], roll: _Rolling) -> list[tuple[float, ...]]:
+    """Per bar: range over 4 h, its share of the 24 h range (compression), the
+    4 h return, and the last hour's notional against the 24 h hourly mean."""
+    mx240, mn240 = roll.get(240, True), roll.get(240, False)
+    mx1440, mn1440 = roll.get(_HOUR_CONTEXT, True), roll.get(_HOUR_CONTEXT, False)
+    prefix = [0.0]
+    for v in notional:
+        prefix.append(prefix[-1] + v)
+    out = []
+    for i, p in enumerate(prices):
+        if p <= 0:
+            out.append((0.0, 0.0, 0.0, 0.0))
+            continue
+        r240 = (mx240[i] - mn240[i]) / p
+        r1440 = (mx1440[i] - mn1440[i]) / p
+        ret240 = abs(p / prices[i - 240] - 1.0) if i >= 240 and prices[i - 240] > 0 else 0.0
+        last_hour = prefix[i + 1] - prefix[max(0, i - 59)]
+        day = prefix[i + 1] - prefix[max(0, i - _HOUR_CONTEXT + 1)]
+        hours = min(i + 1, _HOUR_CONTEXT) / 60.0
+        ratio = last_hour / (day / hours) if day > 0 else 0.0
+        out.append((r240, (r240 / r1440) if r1440 > 0 else 0.0, ret240, ratio))
+    return out
+
+
 def collect_arms(
     features_root: Path,
     *,
-    windows: Sequence[int],
-    horizons: Sequence[int],
-    calm_pct: float,
-    barrier: float,
+    specs: Sequence[ArmSpec],
     max_candles_per_symbol: int,
     min_warmup_bars: int,
-) -> tuple[list[_Arm], int]:
-    """One pass over the feature files, one symbol in memory at a time."""
-    arms = [_Arm(w, h) for w in windows for h in horizons]
+) -> tuple[list[_Arm], int, list[str], list[float]]:
+    """One pass over the feature files, one symbol in memory at a time.
+
+    Returns the arms, the number of symbols read, their names, and each
+    symbol's mean spread (for the liquid/thin split).
+    """
+    arms = [_Arm(spec) for spec in specs]
     features_dir = features_root / "features"
     if not features_dir.exists():
-        return arms, 0
-    context = max(windows) + 1
+        return arms, 0, [], []
+    context = max(max(sp.window for sp in specs), _HOUR_CONTEXT) + 1
     if max_candles_per_symbol <= 0:
         max_candles_per_symbol = 10**9  # all history
-    symbols = 0
+    want = max_candles_per_symbol + context
+    btc = _lead_table(features_dir, "BTCUSDT", want)
+    eth = _lead_table(features_dir, "ETHUSDT", want)
+    names: list[str] = []
+    spreads: list[float] = []
     for symbol_dir in sorted(p for p in features_dir.iterdir() if p.is_dir()):
-        rows = _load_symbol(symbol_dir, max_candles_per_symbol + context)
-        if len(rows) < min_warmup_bars + context:
+        rows = _load_symbol(symbol_dir, want)
+        if len(rows) < min_warmup_bars + 60:
             continue
-        symbols += 1
+        sym_idx = len(names)
+        names.append(symbol_dir.name)
+        spreads.append(sum(float(r.get("spread_bps", 0.0) or 0.0) for r in rows) / len(rows))
         prices = [float(r.get("mid_price", 0.0) or 0.0) for r in rows]
-        synthetic = [bool(r.get("is_synthetic", False)) for r in rows]
+        synthetic_prefix = [0]
+        for r in rows:
+            synthetic_prefix.append(synthetic_prefix[-1] + int(bool(r.get("is_synthetic", False))))
         ranges = [candle_range_20(r) for r in rows]
+        roll = _Rolling(prices)
+        hours = _hour_features(prices, [float(r.get("notional_volume_1m", 0.0) or 0.0) for r in rows], roll)
         start = max(0, len(rows) - max_candles_per_symbol)
         candidates = [
             i for i in range(start, len(rows))
-            if not synthetic[i] and int(rows[i].get("obs", 0) or 0) >= min_warmup_bars
+            if not rows[i].get("is_synthetic", False) and int(rows[i].get("obs", 0) or 0) >= min_warmup_bars
         ]
         for arm in arms:
-            labelled, considered = _calm_labels(prices, synthetic, candidates, window=arm.window,
-                                                horizon=arm.horizon, calm_pct=calm_pct, barrier=barrier,
-                                                candle_ranges=ranges)
+            sp = arm.spec
+            labelled, considered = _calm_labels_fast(
+                roll, synthetic_prefix, candidates, window=sp.window, horizon=sp.horizon,
+                calm_pct=sp.calm_pct, barrier=sp.barrier, candle_ranges=ranges,
+            )
             arm.considered += considered
             for i, move, _up, _down in labelled:
                 src = rows[i]
+                ts = int(src.get("ts", 0) or 0)
+                b = btc.get(ts, (0.0, 0.0, 0.0))
+                e = eth.get(ts, (0.0, 0.0, 0.0))
                 arm.x.extend(float(src.get(name, 0.0) or 0.0) for name in MODEL_FEATURES)
+                arm.x.extend((b[0], b[1], b[2], e[1]))
+                arm.x.extend(hours[i])
                 arm.y.append(move)
-                arm.ts.append(int(src.get("ts", 0) or 0))
-                arm.sym.append(symbols - 1)
-        del rows, prices, synthetic, ranges
-    return arms, symbols
+                arm.ts.append(ts)
+                arm.sym.append(sym_idx)
+        del rows, prices, synthetic_prefix, ranges, roll, hours
+    return arms, len(names), names, spreads
 
 
 def _scores(head: dict[str, Any], x: Any) -> Any:
@@ -283,7 +465,7 @@ def _scores(head: dict[str, Any], x: Any) -> Any:
 
         return lgb.Booster(model_str=head["booster"]).predict(x)
     if head.get("type") == "logreg":
-        w = np.asarray([head["weights"].get(n, 0.0) for n in MODEL_FEATURES], dtype=float)
+        w = np.asarray([head["weights"].get(n, 0.0) for n in FEATURES], dtype=float)
         return 1.0 / (1.0 + np.exp(-(x @ w + float(head.get("bias", 0.0)))))
     return np.full(len(x), float(head.get("prob", 0.0)))
 
@@ -295,7 +477,7 @@ def _best_rule(x: Any, y: list[int], ts: list[int], *, budget: float, z: float, 
     the model has to beat the luckiest single feature, not a fair one.
     """
     best: dict[str, Any] | None = None
-    for j, name in enumerate(MODEL_FEATURES):
+    for j, name in enumerate(FEATURES):
         col = x[:, j]
         if float(col.max()) == float(col.min()):
             continue
@@ -359,7 +541,7 @@ def _coin_controls(
     """
     import numpy as np
 
-    j_atr = list(MODEL_FEATURES).index("range_atr_14")
+    j_atr = list(FEATURES).index("range_atr_14")
     overall = float(x_train[:, j_atr].mean())
     coin_mean = {}
     for c in np.unique(sym_test):
@@ -423,7 +605,7 @@ def _permutation_factors(head: dict[str, Any], x: Any, y: list[int], top: int = 
         return []
     rng = np.random.default_rng(7)
     out = []
-    for j, name in enumerate(MODEL_FEATURES):
+    for j, name in enumerate(FEATURES):
         drops = []
         for _ in range(2):
             shuffled = x.copy()
@@ -442,6 +624,7 @@ def evaluate_arm(
     calib_frac: float = 0.15,
     z: float = 1.96,
     importance: bool = True,
+    symbols: Sequence[int] | None = None,
 ) -> dict[str, Any]:
     import numpy as np
 
@@ -453,6 +636,11 @@ def evaluate_arm(
     y_all = np.frombuffer(arm.y, dtype=np.int8)
     ts_all = np.frombuffer(arm.ts, dtype=np.int64)
     sym_all = np.frombuffer(arm.sym, dtype=np.int16)
+    if symbols is not None:
+        keep = np.isin(sym_all, np.asarray(list(symbols), dtype=np.int16))
+        x, y_all, ts_all, sym_all = x[keep], y_all[keep], ts_all[keep], sym_all[keep]
+        if not len(y_all):
+            return {"status": "no_calm_rows"}
     order = np.argsort(ts_all, kind="stable")
     x, y_all, ts_all, sym_all = x[order], y_all[order], ts_all[order], sym_all[order]
     # The label reaches horizon+1 bars past the row; the purge gap must cover it.
@@ -510,52 +698,63 @@ def evaluate_arm(
 def run_ignition_check(
     features_root: Path,
     *,
-    windows: Sequence[int] = DEFAULT_WINDOWS,
-    horizons: Sequence[int] = DEFAULT_HORIZONS,
-    calm_pct: float = DEFAULT_CALM_PCT,
-    barrier: float = DEFAULT_BARRIER,
+    arms: Sequence[ArmSpec] = DEFAULT_ARMS,
     budget: float = DEFAULT_BUDGET,
     max_candles_per_symbol: int = DEFAULT_DAYS * 1440,
     min_warmup_bars: int = 60,
     train_frac: float = 0.6,
     calib_frac: float = 0.15,
 ) -> dict[str, Any]:
-    arms, symbols = collect_arms(
-        features_root, windows=windows, horizons=horizons, calm_pct=calm_pct, barrier=barrier,
-        max_candles_per_symbol=max_candles_per_symbol, min_warmup_bars=min_warmup_bars,
+    collected, n_symbols, names, spreads = collect_arms(
+        features_root, specs=arms, max_candles_per_symbol=max_candles_per_symbol,
+        min_warmup_bars=min_warmup_bars,
     )
-    if not symbols:
+    if not n_symbols:
         return {"status": "no_features", "arms": []}
 
-    # Each arm compares the model, every feature in both directions, the
-    # per-coin control, and every within-coin feature in both directions.
-    z = family_z(max(1, len(arms)) * (3 + 4 * _N_FEATURES))
+    # Liquid = mean spread at or below the median coin's; thin = above it.
+    median = sorted(spreads)[len(spreads) // 2] if spreads else 0.0
+    groups = {
+        "all": None,
+        "liquid": [i for i, sp in enumerate(spreads) if sp <= median],
+        "thin": [i for i, sp in enumerate(spreads) if sp > median],
+    }
+    n_evals = sum(len(a.spec.groups) for a in collected)
+    # Each evaluation compares the model, every feature in both directions,
+    # the per-coin control, the model within coin, and every within-coin
+    # feature in both directions.
+    z = family_z(max(1, n_evals) * (3 + 4 * _N_FEATURES))
     results: list[dict[str, Any]] = []
     span_days = 0.0
-    for arm in arms:
+    for arm in collected:
+        sp = arm.spec
         if len(arm.ts):
             span_days = max(span_days, (max(arm.ts) - min(arm.ts)) / 86_400_000)
-        res = evaluate_arm(arm, budget=budget, train_frac=train_frac, calib_frac=calib_frac, z=z)
-        res.update({"window": arm.window, "horizon": arm.horizon,
-                    "calm_share": (len(arm.y) / arm.considered) if arm.considered else None})
-        logger.info("ignition arm window=%s horizon=%s -> %s", arm.window, arm.horizon,
-                    res.get("verdict", res.get("status")))
-        results.append(res)
+        for group in sp.groups:
+            res = evaluate_arm(arm, budget=budget, train_frac=train_frac, calib_frac=calib_frac, z=z,
+                               symbols=groups[group])
+            res.update({
+                "name": sp.name, "group": group, "window": sp.window, "horizon": sp.horizon,
+                "calm_pct": sp.calm_pct, "barrier": sp.barrier,
+                "calm_share": (len(arm.y) / arm.considered) if arm.considered else None,
+            })
+            logger.info("ignition arm %s/%s -> %s", sp.name, group, res.get("verdict", res.get("status")))
+            results.append(res)
 
     scored = [a for a in results if a.get("status") == "ok"]
     best = max(scored, key=lambda a: _VERDICT_RANK.get(a["verdict"].split(":")[0], 0), default=None)
     return {
         "status": "ok",
         "computed_at": datetime.now(timezone.utc).isoformat(),
-        "symbols": symbols,
+        "symbols": n_symbols,
+        "groups": {g: [names[i] for i in idx] for g, idx in groups.items() if idx is not None},
         "span_days": span_days,
-        "calm_pct": calm_pct,
-        "barrier": barrier,
         "budget": budget,
         "z": z,
         "min_positive_episodes": MIN_POSITIVE_EPISODES,
         "arms": results,
         "verdict": best["verdict"] if best else "no_scored_arm",
+        "verdict_arm": f"{best['name']}/{best['group']}" if best else None,
     }
 
 
@@ -578,43 +777,46 @@ def format_report(report: dict[str, Any]) -> str:
         return "-" if v is None else spec.format(v)
 
     lines = [
-        f"Зарождение движения: тишина (цена и свечи high-low < {report['calm_pct'] * 100:.1f}% за окно) "
-        f"→ ход ≥{report['barrier'] * 100:.1f}% в любую сторону, вход со следующей свечи",
+        "Зарождение движения: рынок спокоен (цена и свечи) → резкий ход в любую сторону, вход со следующей свечи",
         f"{report['symbols']} символов · история {report.get('span_days', 0):.1f} дн · бюджет "
         f"{report['budget'] * 100:.1f}% тихих строк теста · z={report['z']:.2f} (поправка на все сравнения)",
         f"вывод только при ≥{report.get('min_positive_episodes', MIN_POSITIVE_EPISODES)} независимых "
         "событиях-ходах в тесте (колонка «событ»)",
+        "m30/m60: тишина 30/60 мин (<0.5%) → ход ≥1% за 30 мин · h6: тишина 6 ч (<1.5%) → ход ≥3% за 4 ч",
         "",
-        f"{'окно':>4} {'гориз':>5} {'тихих':>6} {'тест,ч':>6} {'событ':>5} {'база':>6} │ {'модель':>6} {'lift':>5} "
-        f"{'lift_lo':>7} {'эпиз':>4} │ {'лучший признак':<22} {'lift':>5} {'lift_lo':>7} │ вывод",
+        f"{'вариант':<11} {'тихих':>6} {'тест,ч':>6} {'событ':>5} {'база':>6} │ {'модель':>6} {'lift':>5} "
+        f"{'lift_lo':>7} {'эпиз':>4} │ {'лучший признак':<24} {'lift':>5} {'lift_lo':>7} │ вывод",
     ]
     for a in report["arms"]:
+        label = f"{a.get('name')}/{a.get('group')}"
         if a.get("status") != "ok":
-            lines.append(f"{a['window']:>4} {a['horizon']:>5}  {a.get('status')}  "
-                         f"(событий в тесте: {a.get('test_positives', '-')})")
+            lines.append(f"{label:<11}  {a.get('status')}  (событий в тесте: {a.get('test_positives', '-')})")
             continue
         m, r = a["model"], a["best_rule"]
         lines.append(
-            f"{a['window']:>4} {a['horizon']:>5} {f(a['calm_share'], '{:.0%}'):>6} {f(a.get('test_hours'), '{:.0f}'):>6} "
+            f"{label:<11} {f(a['calm_share'], '{:.0%}'):>6} {f(a.get('test_hours'), '{:.0f}'):>6} "
             f"{a.get('positive_episodes', 0):>5} {f(a['base_rate'], '{:.4f}'):>6} │ "
             f"{f(m.get('precision')):>6} {f(m.get('lift'), '{:.2f}'):>5} {f(m.get('lift_ci_low_clustered'), '{:.2f}'):>7} "
-            f"{m.get('episodes', 0):>4} │ {str(r.get('rule')):<22} {f(r.get('lift'), '{:.2f}'):>5} "
+            f"{m.get('episodes', 0):>4} │ {str(r.get('rule')):<24} {f(r.get('lift'), '{:.2f}'):>5} "
             f"{f(r.get('lift_ci_low_clustered'), '{:.2f}'):>7} │ {a['verdict']}"
         )
         c, w, mw = a.get("coin_only", {}), a.get("within_coin", {}), a.get("model_within_coin", {})
         lines.append(
-            f"{'':>10}только монета: lift {f(c.get('lift'), '{:.2f}')} lo {f(c.get('lift_ci_low_clustered'), '{:.2f}')}"
+            f"{'':>12}только монета: lift {f(c.get('lift'), '{:.2f}')} lo {f(c.get('lift_ci_low_clustered'), '{:.2f}')}"
             f" · модель внутри монеты: lift {f(mw.get('lift'), '{:.2f}')} lo "
             f"{f(mw.get('lift_ci_low_clustered'), '{:.2f}')} · признак внутри монеты: {w.get('rule')} "
             f"lift {f(w.get('lift'), '{:.2f}')} lo {f(w.get('lift_ci_low_clustered'), '{:.2f}')}"
         )
+    groups = report.get("groups", {})
+    if groups.get("thin"):
+        lines += ["", "тонкие монеты (спред выше медианы): " + ", ".join(groups["thin"])]
     key = report["verdict"].split(":")[0]
-    lines += ["", f"ИТОГ: {report['verdict']} — {_VERDICT_RU.get(key, '')}"]
+    lines += ["", f"ИТОГ: {report['verdict']} ({report.get('verdict_arm')}) — {_VERDICT_RU.get(key, '')}"]
     best = max((a for a in report["arms"] if a.get("top_factors")),
                key=lambda a: a["model"].get("lift_ci_low_clustered") or 0.0, default=None)
     if best and key in ("precursor_found", "signal_matched_by", "timing_signal"):
-        lines += ["", f"Факторы модели (окно {best['window']}, горизонт {best['horizon']}), падение PR-AUC при перемешивании:"]
-        lines += [f"  {t['feature']:<20} {t['importance_pct']:7.2f}%" for t in best["top_factors"]]
+        lines += ["", f"Факторы модели ({best['name']}/{best['group']}), падение PR-AUC при перемешивании:"]
+        lines += [f"  {t['feature']:<22} {t['importance_pct']:7.2f}%" for t in best["top_factors"]]
     elif best:
         lines += ["", "Факторы не показаны: без доказанного сигнала их ранжирование — шум."]
     return "\n".join(lines)

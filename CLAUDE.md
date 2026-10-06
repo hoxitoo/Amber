@@ -340,6 +340,32 @@ episode count, and what it does and does not show.
   test suite running beside it). Re-run pending; it decides between
   retargeting and D2.
 
+- **2026-10-06, ignition run with coin controls** (30 days): verdict
+  **`coin_choice_only`**. 30/30 (87 moves): model lift 7.50 / lo 2.35, rule
+  `+range_atr_14` 7.50 / 2.05, static per-coin number 7.89 / **1.27**; within
+  coin: model lift 4.08 / lo 0.72, best feature `rank:+range_atr_14` 5.39 /
+  0.95. 30/15, 60/30: no_precursor; 60/15: underpowered. Reading: on 1m model
+  features the effect is which coin moves, not when. The within-coin point
+  lifts (4-5) are suggestive, but their bounds sit below 1 — not shown, not
+  excluded.
+- **2026-10-06** — the owner asked what could change the picture (other
+  coins, longer candles, new data). Answer given: top-27-by-volume would make
+  it harder (most efficient markets); longer candles hide a 15-30 min move,
+  but an hour-scale question is worth asking; cheapest new information is
+  already on disk (BTC/ETH lead, hour-scale build-up). Built into the
+  ignition check before any of it was run: lead features (btc_absret_1/5,
+  btc_range_atr_14, eth_absret_5), hour features (4 h range, 4 h / 24 h
+  compression, 4 h return, last-hour notional vs 24 h), arms m30
+  (all / liquid / thin by median spread), m60, and h6 (calm 6 h < 1.5% -> 3%
+  within 4 h); the 15-bar horizons dropped (power: 17-44 moves). Fast
+  rolling windows, pinned to the row-by-row labels by an equivalence test.
+  Fixtures: 10 null and 8 jumpy-coin markets -> no timing signal; planted
+  oi_roc_5 -> found 5/5; BTC jumping 2 bars before alt bursts -> found 3/3 as
+  `timing_signal:rank:+btc_absret_1` (needs ~2 weeks of test data at z 3.8).
+  Measured here at 30 days x 27 symbols incl. BTC/ETH: peak 406 MB, ~13.5
+  min. Run pending. Next after this: sub-minute trade features, then the
+  order book.
+
 ## 11. The plan to a profit test
 
 Proposed 2026-09-29. Why we have been circling: the only out-of-sample data is
@@ -386,6 +412,8 @@ thing that can say whether acting on alerts makes money.
   no timing information, treat as `no_precursor`;
   `no_precursor` -> 1m public bars cannot give early warning, D2 (order book,
   tick flow) is the only route; `underpowered` -> wait for more calm history.
+  Since 2026-10-06 the arms are m30 (all/liquid/thin), m60 and h6 (6 h calm
+  -> 3% in 4 h), with BTC/ETH lead and hour-scale features added.
   A verdict needs ≥20 independent moves in the test segment
   (`ignition.MIN_POSITIVE_EPISODES`); run with `--days 30` or more, because a
   1% move from calm is a ~1-in-1000-minutes event.

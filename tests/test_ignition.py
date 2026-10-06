@@ -12,7 +12,18 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from amber.backtest.ignition import _verdict, build_ignition_rows, format_report, run_ignition_check
+from amber.backtest.ignition import (
+    DEFAULT_ARMS,
+    _calm_labels,
+    _calm_labels_fast,
+    _rolling,
+    _Rolling,
+    _verdict,
+    build_ignition_rows,
+    candle_range_20,
+    format_report,
+    run_ignition_check,
+)
 from amber.backtest.label_sweep import _Series
 from amber.models.features import MODEL_FEATURES
 
@@ -20,7 +31,7 @@ POSITIVE = ("timing_signal", "precursor_found", "signal_matched_by", "single_fea
 
 
 def _write_market(root: Path, *, seed: int, planted: bool, symbols: int = 6, n: int = 6000,
-                  burst_p: float = 0.004, coin_levels: bool = False) -> Path:
+                  burst_p: float = 0.004, coin_levels: bool = False, btc_leads: bool = False) -> Path:
     """Quiet random walks with sudden 2% bursts in a random direction.
 
     With `planted`, `oi_roc_5` jumps two bars before each burst starts and
@@ -28,6 +39,7 @@ def _write_market(root: Path, *, seed: int, planted: bool, symbols: int = 6, n: 
     Without it the bursts are independent of every feature.
     """
     rng = random.Random(seed)
+    btc_jumps: set[int] = set()
     for s in range(symbols):
         d = root / "features" / f"S{s:02d}USDT"
         d.mkdir(parents=True)
@@ -43,6 +55,7 @@ def _write_market(root: Path, *, seed: int, planted: bool, symbols: int = 6, n: 
             for k in range(1, 11):
                 drift[b + k] = sign * 0.002
             warn[b - 1] = warn[b] = True
+            btc_jumps.add(b - 2)
         price = 100.0
         recent: list[float] = []
         with (d / "part-000.jsonl").open("w") as fh:
@@ -62,7 +75,27 @@ def _write_market(root: Path, *, seed: int, planted: bool, symbols: int = 6, n: 
                 row.update({"ts": 1_700_000_000_000 + i * 60_000, "mid_price": price, "ret_1": ret,
                             "obs": 500, "is_synthetic": False})
                 fh.write(json.dumps(row) + "\n")
+    if btc_leads:
+        _write_btc(root, rng, n, btc_jumps)
     return root
+
+
+def _write_btc(root: Path, rng: random.Random, n: int, jumps: set[int]) -> None:
+    """BTC jumps 0.6% two bars before every alt burst: a market lead the
+    alts' own features cannot see."""
+    d = root / "features" / "BTCUSDT"
+    d.mkdir(parents=True)
+    price, recent = 30_000.0, []
+    with (d / "part-000.jsonl").open("w") as fh:
+        for i in range(n):
+            ret = rng.gauss(0, 0.0003) + (0.006 if i in jumps else 0.0)
+            price *= 1 + ret
+            recent = (recent + [price])[-20:]
+            row = {name: rng.gauss(0, 1) for name in MODEL_FEATURES}
+            row.update({"ts": 1_700_000_000_000 + i * 60_000, "mid_price": price, "ret_1": ret, "obs": 500,
+                        "is_synthetic": False, "dist_to_high_20": price / max(recent) - 1,
+                        "dist_to_low_20": price / min(recent) - 1})
+            fh.write(json.dumps(row) + "\n")
 
 
 def _run(planted: bool, seed: int, **kw) -> dict:
@@ -75,7 +108,7 @@ class TestIgnitionOnKnownAnswers(unittest.TestCase):
     def test_bursts_from_nowhere_are_not_predictable(self):
         for seed in (1, 2, 3):
             rep = _run(planted=False, seed=seed)
-            self.assertEqual(len(rep["arms"]), 4)
+            self.assertEqual(len(rep["arms"]), sum(len(a.groups) for a in DEFAULT_ARMS))
             for arm in rep["arms"]:
                 self.assertNotIn(arm.get("verdict", "").split(":")[0], POSITIVE, f"seed {seed}: {arm}")
 
@@ -92,6 +125,59 @@ class TestIgnitionOnKnownAnswers(unittest.TestCase):
             for arm in rep["arms"]:
                 self.assertFalse(arm.get("verdict", "").startswith("timing_signal"), format_report(rep))
             self.assertIn(rep["verdict"], ("coin_choice_only", "underpowered", "no_precursor"), format_report(rep))
+
+
+class TestMarketLead(unittest.TestCase):
+    def test_btc_moving_first_is_found_as_timing_and_named(self):
+        """Alts burst from calm two bars after BTC jumps; nothing in the alts'
+        own features warns. The lead features must carry it."""
+        # Three alts, so each BTC jump is about one of three coins; two
+        # weeks, so the test segment holds enough moves to clear z ~ 3.8.
+        rep = _run(planted=False, seed=1, btc_leads=True, symbols=3, n=20000, burst_p=0.003)
+        self.assertTrue(rep["verdict"].startswith("timing_signal"), format_report(rep))
+        best = next(a for a in rep["arms"] if a.get("verdict", "").startswith("timing_signal"))
+        named = " ".join([best.get("within_coin", {}).get("rule") or "",
+                          *(t["feature"] for t in best.get("top_factors", [])[:3])])
+        self.assertIn("btc_absret", named, format_report(rep))
+
+    def test_groups_split_every_coin_once(self):
+        rep = _run(planted=False, seed=1)
+        liquid, thin = set(rep["groups"]["liquid"]), set(rep["groups"]["thin"])
+        self.assertFalse(liquid & thin)
+        self.assertEqual(len(liquid | thin), rep["symbols"])
+
+
+class TestFastLabelsMatchTheSlowOnes(unittest.TestCase):
+    def test_rolling_extremes(self):
+        rng = random.Random(0)
+        vals = [rng.random() for _ in range(500)]
+        for w in (1, 5, 37):
+            self.assertEqual(_rolling(vals, w, True), [max(vals[max(0, i - w + 1): i + 1]) for i in range(500)])
+            self.assertEqual(_rolling(vals, w, False), [min(vals[max(0, i - w + 1): i + 1]) for i in range(500)])
+
+    def test_identical_labels_on_random_series(self):
+        """Gaps, wicks, calm stretches and bursts, across every arm shape."""
+        rng = random.Random(5)
+        for trial in range(25):
+            n = 900
+            price, prices = 100.0, []
+            for i in range(n):
+                price *= 1 + rng.gauss(0, 0.0004) + (rng.choice((1, -1)) * 0.004 if rng.random() < 0.01 else 0)
+                prices.append(price)
+            synthetic = [rng.random() < 0.003 for _ in range(n)]
+            prefix = [0]
+            for v in synthetic:
+                prefix.append(prefix[-1] + int(v))
+            ranges = [candle_range_20({"dist_to_high_20": -abs(rng.gauss(0, 0.002)),
+                                       "dist_to_low_20": abs(rng.gauss(0, 0.002))}) for _ in range(n)]
+            candidates = [i for i in range(n) if not synthetic[i]]
+            roll = _Rolling(prices)
+            for window, horizon, calm, barrier in ((30, 30, 0.005, 0.01), (60, 15, 0.005, 0.01),
+                                                   (360, 240, 0.015, 0.03), (5, 3, 0.004, 0.005)):
+                kw = dict(window=window, horizon=horizon, calm_pct=calm, barrier=barrier, candle_ranges=ranges)
+                slow = _calm_labels(prices, synthetic, candidates, **kw)
+                fast = _calm_labels_fast(roll, prefix, candidates, **kw)
+                self.assertEqual(slow, fast, f"trial {trial}, arm {window}/{horizon}")
 
 
 class TestWithinCoinStratification(unittest.TestCase):

@@ -349,6 +349,11 @@ the collected data: calm bars only, 1% move within 15/30 bars, model vs every
 single feature, exact family-wise bounds. Its verdict decides between
 retargeting the scanner to ignition and D2 (sub-minute data).
 
+- 2026-10-06: on 1m model features -> `coin_choice_only` (jumpy coins move
+  more often; nothing says when). Added from data on disk: BTC/ETH lead,
+  hour-scale build-up, liquid/thin split, a 6 h -> 4 h arm. If those are
+  empty too: sub-minute trade features, then the order book (D2).
+
 ### Backlog
 - [ ] T6 cross-exchange lead/lag features · A7 feature-list relocation.
 - [ ] Universe expansion to 100–200 symbols. Measured ceilings: memory ~50
