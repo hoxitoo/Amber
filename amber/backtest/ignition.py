@@ -28,6 +28,12 @@ over everything compared (arms x (model + every rule)), so ranking 4 arms and
 - `signal_matched_by:<rule>`: the model's lower bound clears 1 but not the best
   rule — there is a precursor, and one feature carries it as well.
 - `single_feature_signal:<rule>`: only a single feature's lower bound clears 1.
+- `timing_signal:<model|rule>`: with the SAME share of alerts taken from
+  every coin (within-coin ranks), the model or a feature still beats the base
+  rate — "this coin is unusual for itself right now" precedes moves. This is
+  the warning the owner asked for, and it outranks every verdict below.
+- `coin_choice_only`: the signal is matched by a static per-coin number (the
+  coin's train-mean range_atr_14): it says which coins move more, not when.
 - `no_precursor`: nothing beats chance — on these inputs a quiet market gives
   no warning, and earlier warning needs earlier data (roadmap D2: order book
   and tick-level trade flow).
@@ -96,10 +102,12 @@ DEFAULT_DAYS = 30
 _N_FEATURES = len(MODEL_FEATURES)
 
 _VERDICT_RANK = {
+    "timing_signal": 6,
     "precursor_found": 5,
     "signal_matched_by": 4,
     "single_feature_signal": 3,
-    "no_precursor": 2,
+    "coin_choice_only": 2,
+    "no_precursor": 1.5,
     "underpowered": 1,
 }
 
@@ -204,6 +212,7 @@ class _Arm:
         self.x = array("f")  # row-major, _N_FEATURES per row
         self.y = array("b")
         self.ts = array("q")
+        self.sym = array("h")  # symbol index: the coin-choice and within-coin controls need it
         self.considered = 0
 
 
@@ -261,6 +270,7 @@ def collect_arms(
                 arm.x.extend(float(src.get(name, 0.0) or 0.0) for name in MODEL_FEATURES)
                 arm.y.append(move)
                 arm.ts.append(int(src.get("ts", 0) or 0))
+                arm.sym.append(symbols - 1)
         del rows, prices, synthetic, ranges
     return arms, symbols
 
@@ -296,12 +306,104 @@ def _best_rule(x: Any, y: list[int], ts: list[int], *, budget: float, z: float, 
     return best or {"rule": None, "lift": None, "lift_ci_low_clustered": None, "episodes": 0}
 
 
-def _verdict(model: dict[str, Any], rule: dict[str, Any], positive_episodes: int) -> str:
+def _within_coin_ranks(values: Any, sym: Any, seed: int = 11) -> Any:
+    """Percentile rank of each column within its own coin, ties broken at random.
+
+    Taking the global top q% of these picks about q% of EVERY coin's rows, so
+    with no timing information the expected precision is exactly the overall
+    base rate — coin choice cannot leak in. A z-score against the coin's mean
+    and spread did leak it: a jumpy coin's features have heavier tails, the top
+    1% of z-scores piled onto it, and pure-noise fixtures read as "timing"
+    (found 2026-10-06, before any live run of this control).
+    """
+    import numpy as np
+
+    rng = np.random.default_rng(seed)
+    v = np.asarray(values, dtype=float)
+    one_d = v.ndim == 1
+    if one_d:
+        v = v[:, None]
+    out = np.empty_like(v)
+    for c in np.unique(sym):
+        idx = np.flatnonzero(sym == c)
+        if len(idx) == 1:
+            out[idx] = 0.5
+            continue
+        for j in range(v.shape[1]):
+            order = np.lexsort((rng.random(len(idx)), v[idx, j]))
+            ranks = np.empty(len(idx))
+            ranks[order] = np.arange(len(idx)) / (len(idx) - 1)
+            out[idx, j] = ranks
+    return out[:, 0] if one_d else out
+
+
+def _coin_controls(
+    x_train: Any, sym_train: Any, x_test: Any, sym_test: Any, y: list[int], ts: list[int],
+    model_scores: Any, *, budget: float, z: float, horizon: int,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Separate WHICH coin from WHEN.
+
+    After the candle filter (2026-10-06 live run) the winning signal was still
+    range_atr_14 with spread_bps second: both are mostly properties of the
+    coin, not of the moment. A jumpy alt's calm candle is wider than BTC's and
+    a 1% move is routine for it, so ranking by them may only pick coins.
+
+    - coin_only: each coin scored by its mean range_atr_14 over the TRAIN
+      segment — one number per coin, no timing information at all. If it does
+      as well as the model, the "precursor" is coin choice.
+    - within_coin: every feature ranked within its own coin (same share of
+      alerts from every coin), both directions, best achieved lift.
+    - model_within: the model's own scores ranked within each coin.
+    The last two are "this coin is unusual for itself right now" — the warning
+    the owner asked for.
+    """
+    import numpy as np
+
+    j_atr = list(MODEL_FEATURES).index("range_atr_14")
+    overall = float(x_train[:, j_atr].mean())
+    coin_mean = {}
+    for c in np.unique(sym_test):
+        rows = x_train[sym_train == c, j_atr]
+        coin_mean[int(c)] = float(rows.mean()) if len(rows) >= 30 else overall
+    coin_score = [coin_mean[int(c)] for c in sym_test]
+    coin_res = {**_precision_at_budget(coin_score, y, ts, budget, z, horizon), "rule": "coin:range_atr_14"}
+
+    within = _best_rule(_within_coin_ranks(x_test, sym_test), y, ts, budget=budget, z=z, horizon=horizon)
+    if within.get("rule"):
+        within["rule"] = "rank:" + within["rule"]
+    model_within = _precision_at_budget(
+        _within_coin_ranks(np.asarray(model_scores, dtype=float), sym_test).tolist(), y, ts, budget, z, horizon
+    )
+    return coin_res, within, model_within
+
+
+def _verdict(
+    model: dict[str, Any],
+    rule: dict[str, Any],
+    positive_episodes: int,
+    coin: dict[str, Any] | None = None,
+    within: dict[str, Any] | None = None,
+    model_within: dict[str, Any] | None = None,
+) -> str:
     if (model.get("episodes") or 0) < MIN_EPISODES or positive_episodes < MIN_POSITIVE_EPISODES:
         return "underpowered"
     m_lo = model.get("lift_ci_low_clustered") or 0.0
     r_lift = rule.get("lift") or 0.0
     r_lo = rule.get("lift_ci_low_clustered") or 0.0
+    within = within or {}
+    coin = coin or {}
+    model_within = model_within or {}
+    w_lo = within.get("lift_ci_low_clustered") or 0.0
+    mw_lo = model_within.get("lift_ci_low_clustered") or 0.0
+    # Timing information that survives taking the same share from every coin.
+    if mw_lo > 1.0 and (model_within.get("episodes") or 0) >= MIN_EPISODES and mw_lo >= w_lo:
+        return "timing_signal:model"
+    if w_lo > 1.0 and (within.get("episodes") or 0) >= MIN_EPISODES:
+        return f"timing_signal:{within.get('rule')}"
+    if max(m_lo, r_lo) > 1.0 and (coin.get("lift") or 0.0) >= max(m_lo, r_lo):
+        # A static per-coin number does as well: the signal says which coin,
+        # not when.
+        return "coin_choice_only"
     if m_lo > 1.0 and m_lo > r_lift:
         return "precursor_found"
     if m_lo > 1.0:
@@ -350,8 +452,9 @@ def evaluate_arm(
     x = np.frombuffer(arm.x, dtype=np.float32).reshape(-1, _N_FEATURES).astype(np.float64)
     y_all = np.frombuffer(arm.y, dtype=np.int8)
     ts_all = np.frombuffer(arm.ts, dtype=np.int64)
+    sym_all = np.frombuffer(arm.sym, dtype=np.int16)
     order = np.argsort(ts_all, kind="stable")
-    x, y_all, ts_all = x[order], y_all[order], ts_all[order]
+    x, y_all, ts_all, sym_all = x[order], y_all[order], ts_all[order], sym_all[order]
     # The label reaches horizon+1 bars past the row; the purge gap must cover it.
     splits = make_holdout_splits(ts_all.tolist(), train_frac=train_frac, calib_frac=calib_frac,
                                  gap=max(30, arm.horizon + 1))
@@ -376,6 +479,10 @@ def evaluate_arm(
     scores = _scores(head, x_test).tolist()
     model_res = _precision_at_budget(scores, y, ts, budget, z, arm.horizon)
     rule_res = _best_rule(x_test, y, ts, budget=budget, z=z, horizon=arm.horizon)
+    coin_res, within_res, model_within = _coin_controls(
+        x[train], sym_all[train], x_test, sym_all[test], y, ts, scores,
+        budget=budget, z=z, horizon=arm.horizon,
+    )
     positive_episodes = _episodes([t for t, v in zip(ts, y) if v], arm.horizon)
     out: dict[str, Any] = {
         "status": "ok",
@@ -390,7 +497,10 @@ def evaluate_arm(
         "base_rate": float(y_test.mean()),
         "model": model_res,
         "best_rule": rule_res,
-        "verdict": _verdict(model_res, rule_res, positive_episodes),
+        "coin_only": coin_res,
+        "within_coin": within_res,
+        "model_within_coin": model_within,
+        "verdict": _verdict(model_res, rule_res, positive_episodes, coin_res, within_res, model_within),
     }
     if importance:
         out["top_factors"] = _permutation_factors(head, x_test, y)
@@ -417,8 +527,9 @@ def run_ignition_check(
     if not symbols:
         return {"status": "no_features", "arms": []}
 
-    # Each arm compares the model and every feature in both directions.
-    z = family_z(max(1, len(arms)) * (1 + 2 * _N_FEATURES))
+    # Each arm compares the model, every feature in both directions, the
+    # per-coin control, and every within-coin feature in both directions.
+    z = family_z(max(1, len(arms)) * (3 + 4 * _N_FEATURES))
     results: list[dict[str, Any]] = []
     span_days = 0.0
     for arm in arms:
@@ -449,6 +560,8 @@ def run_ignition_check(
 
 
 _VERDICT_RU = {
+    "timing_signal": "ПРЕДВЕСТНИК ПО ВРЕМЕНИ: монета ведёт себя необычно для себя самой перед ходом",
+    "coin_choice_only": "сигнал только о выборе монеты: «нервные» монеты ходят чаще, но КОГДА — не видно",
     "precursor_found": "НАЙДЕН ПРЕДВЕСТНИК: модель предсказывает ход из тишины лучше любого одного признака",
     "signal_matched_by": "предвестник есть, но один признак ловит его так же хорошо, как модель",
     "single_feature_signal": "слабый предвестник есть только в одном признаке",
@@ -488,11 +601,18 @@ def format_report(report: dict[str, Any]) -> str:
             f"{m.get('episodes', 0):>4} │ {str(r.get('rule')):<22} {f(r.get('lift'), '{:.2f}'):>5} "
             f"{f(r.get('lift_ci_low_clustered'), '{:.2f}'):>7} │ {a['verdict']}"
         )
+        c, w, mw = a.get("coin_only", {}), a.get("within_coin", {}), a.get("model_within_coin", {})
+        lines.append(
+            f"{'':>10}только монета: lift {f(c.get('lift'), '{:.2f}')} lo {f(c.get('lift_ci_low_clustered'), '{:.2f}')}"
+            f" · модель внутри монеты: lift {f(mw.get('lift'), '{:.2f}')} lo "
+            f"{f(mw.get('lift_ci_low_clustered'), '{:.2f}')} · признак внутри монеты: {w.get('rule')} "
+            f"lift {f(w.get('lift'), '{:.2f}')} lo {f(w.get('lift_ci_low_clustered'), '{:.2f}')}"
+        )
     key = report["verdict"].split(":")[0]
     lines += ["", f"ИТОГ: {report['verdict']} — {_VERDICT_RU.get(key, '')}"]
     best = max((a for a in report["arms"] if a.get("top_factors")),
                key=lambda a: a["model"].get("lift_ci_low_clustered") or 0.0, default=None)
-    if best and key in ("precursor_found", "signal_matched_by"):
+    if best and key in ("precursor_found", "signal_matched_by", "timing_signal"):
         lines += ["", f"Факторы модели (окно {best['window']}, горизонт {best['horizon']}), падение PR-AUC при перемешивании:"]
         lines += [f"  {t['feature']:<20} {t['importance_pct']:7.2f}%" for t in best["top_factors"]]
     elif best:

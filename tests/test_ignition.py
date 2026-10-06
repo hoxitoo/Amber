@@ -12,15 +12,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from amber.backtest.ignition import build_ignition_rows, format_report, run_ignition_check
+from amber.backtest.ignition import _verdict, build_ignition_rows, format_report, run_ignition_check
 from amber.backtest.label_sweep import _Series
 from amber.models.features import MODEL_FEATURES
 
-POSITIVE = ("precursor_found", "signal_matched_by", "single_feature_signal")
+POSITIVE = ("timing_signal", "precursor_found", "signal_matched_by", "single_feature_signal")
 
 
 def _write_market(root: Path, *, seed: int, planted: bool, symbols: int = 6, n: int = 6000,
-                  burst_p: float = 0.004) -> Path:
+                  burst_p: float = 0.004, coin_levels: bool = False) -> Path:
     """Quiet random walks with sudden 2% bursts in a random direction.
 
     With `planted`, `oi_roc_5` jumps two bars before each burst starts and
@@ -31,7 +31,11 @@ def _write_market(root: Path, *, seed: int, planted: bool, symbols: int = 6, n: 
     for s in range(symbols):
         d = root / "features" / f"S{s:02d}USDT"
         d.mkdir(parents=True)
-        starts = {i for i in range(80, n - 40) if rng.random() < burst_p}
+        # With coin_levels, coins differ only in how jumpy they are: coin s
+        # bursts (1 + s) times as often and carries a matching range_atr_14
+        # level, but nothing in any coin's features says WHEN it will burst.
+        p_s = burst_p * (1 + s) * 2 / (symbols + 1) if coin_levels else burst_p
+        starts = {i for i in range(80, n - 40) if rng.random() < p_s}
         drift = [0.0] * n
         warn = [False] * n
         for b in starts:
@@ -53,6 +57,8 @@ def _write_market(root: Path, *, seed: int, planted: bool, symbols: int = 6, n: 
                 row["dist_to_low_20"] = price / min(recent) - 1
                 if planted and warn[i]:
                     row["oi_roc_5"] = 4.0 + rng.random()
+                if coin_levels:
+                    row["range_atr_14"] = 1.0 + s + rng.gauss(0, 0.05)
                 row.update({"ts": 1_700_000_000_000 + i * 60_000, "mid_price": price, "ret_1": ret,
                             "obs": 500, "is_synthetic": False})
                 fh.write(json.dumps(row) + "\n")
@@ -73,6 +79,66 @@ class TestIgnitionOnKnownAnswers(unittest.TestCase):
             for arm in rep["arms"]:
                 self.assertNotIn(arm.get("verdict", "").split(":")[0], POSITIVE, f"seed {seed}: {arm}")
 
+    def test_a_planted_precursor_is_timing_not_coin_choice(self):
+        rep = _run(planted=True, seed=2)
+        self.assertTrue(rep["verdict"].startswith("timing_signal"), format_report(rep))
+
+    def test_jumpy_coins_are_coin_choice_not_timing(self):
+        """Coins differ only in how often they move; a coin-level feature
+        ranks them perfectly yet says nothing about WHEN. That must not be
+        reported as a warning before the move."""
+        for seed in (1, 2, 3):
+            rep = _run(planted=False, seed=seed, coin_levels=True)
+            for arm in rep["arms"]:
+                self.assertFalse(arm.get("verdict", "").startswith("timing_signal"), format_report(rep))
+            self.assertIn(rep["verdict"], ("coin_choice_only", "underpowered", "no_precursor"), format_report(rep))
+
+
+class TestWithinCoinStratification(unittest.TestCase):
+    """The within-coin control must take the same share of every coin, or a
+    coin with heavier-tailed features wins the alerts and coin choice leaks
+    back in as 'timing' — which is what a z-score version did on noise."""
+
+    def test_top_share_is_equal_across_coins_whatever_the_tails(self):
+        import numpy as np
+
+        from amber.backtest.ignition import _within_coin_ranks
+
+        rng = np.random.default_rng(0)
+        calm = rng.normal(0, 1, 4000)               # coin 0: thin tails
+        jumpy = rng.standard_t(2, 4000) * 3 + 1.0   # coin 1: heavy tails, shifted
+        values = np.concatenate([calm, jumpy])
+        sym = np.array([0] * 4000 + [1] * 4000, dtype=np.int16)
+        ranks = _within_coin_ranks(values, sym)
+        top = ranks >= np.quantile(ranks, 0.9)
+        for c in (0, 1):
+            share = top[sym == c].mean()
+            self.assertAlmostEqual(share, 0.10, delta=0.005, msg=f"coin {c} took {share:.3f} of its rows")
+
+
+class TestVerdictRouting(unittest.TestCase):
+    """The routing itself, on the shapes a live run produces."""
+
+    M = {"episodes": 150, "lift": 7.5, "lift_ci_low_clustered": 2.56}
+    R = {"episodes": 150, "lift": 7.5, "lift_ci_low_clustered": 2.22, "rule": "+range_atr_14"}
+    NONE = {"episodes": 150, "lift": 1.1, "lift_ci_low_clustered": 0.3, "rule": "rank:+ret_5"}
+
+    def test_a_static_per_coin_number_that_does_as_well_is_coin_choice(self):
+        coin = {"lift": 8.0, "lift_ci_low_clustered": 2.0}
+        self.assertEqual(_verdict(self.M, self.R, 80, coin, self.NONE, self.NONE), "coin_choice_only")
+
+    def test_timing_wins_over_everything(self):
+        within = {"episodes": 120, "lift": 3.0, "lift_ci_low_clustered": 1.4, "rule": "rank:+oi_roc_5"}
+        coin = {"lift": 8.0, "lift_ci_low_clustered": 2.0}
+        self.assertEqual(_verdict(self.M, self.R, 80, coin, within, self.NONE), "timing_signal:rank:+oi_roc_5")
+        mw = {"episodes": 120, "lift": 4.0, "lift_ci_low_clustered": 1.9}
+        self.assertEqual(_verdict(self.M, self.R, 80, coin, within, mw), "timing_signal:model")
+
+    def test_without_the_controls_the_old_routing_stands(self):
+        weak_coin = {"lift": 1.5, "lift_ci_low_clustered": 0.2}
+        self.assertEqual(_verdict(self.M, self.R, 80, weak_coin, self.NONE, self.NONE),
+                         "signal_matched_by:+range_atr_14")
+
     def test_too_few_moves_is_underpowered_not_no_precursor(self):
         """The first live run: ~10 moves in the test segment read as
         `no_precursor`. Even a planted precursor cannot be shown on that few,
@@ -88,8 +154,9 @@ class TestIgnitionOnKnownAnswers(unittest.TestCase):
         self.assertIn(rep["verdict"].split(":")[0], POSITIVE, format_report(rep))
         best = max((a for a in rep["arms"] if a.get("status") == "ok"),
                    key=lambda a: a["model"].get("lift_ci_low_clustered") or 0)
-        named = best.get("best_rule", {}).get("rule", "") + " " + " ".join(
-            t["feature"] for t in best.get("top_factors", [])[:2])
+        named = " ".join([best.get("best_rule", {}).get("rule") or "",
+                          best.get("within_coin", {}).get("rule") or "",
+                          *(t["feature"] for t in best.get("top_factors", [])[:2])])
         self.assertIn("oi_roc_5", named, format_report(rep))
         self.assertIn("ИТОГ", format_report(rep))
 

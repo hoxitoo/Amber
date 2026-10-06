@@ -323,6 +323,23 @@ episode count, and what it does and does not show.
   dist_to_high_20 / dist_to_low_20). Re-run pending; that run is the clean
   answer to the owner's question.
 
+- **2026-10-06, ignition run with the candle filter** (30 days, 174-178 h
+  test): moves from calm 44 / 87 / 17 / 40. 30/30: model lift 7.50, lift_lo
+  2.56; `+range_atr_14` lift 7.50, lift_lo 2.22 -> `signal_matched_by`. 30/15:
+  rule only (lift_lo 1.12). 60/30: none. 60/15: underpowered. Factors:
+  range_atr_14 55%, spread_bps 17%, the rest ≤3%. Reading: the effect
+  survives true calm, but its two carriers are mostly COIN properties (a
+  jumpy alt's calm candle is wider and its spread wider than BTC's), so it may
+  say which coin moves, not when. Added controls: `coin_only` (a static
+  per-coin number) and within-coin ranking (same share of alerts from every
+  coin) for every feature and for the model; verdicts `timing_signal` /
+  `coin_choice_only`. A z-score version of the within-coin control leaked
+  coin choice on noise fixtures (heavier tails win the alerts) — replaced by
+  ranks before any live use; a property test pins equal per-coin shares.
+  Measured here at 30 days x 27 symbols: peak 314 MB, ~13 min (with the
+  test suite running beside it). Re-run pending; it decides between
+  retargeting and D2.
+
 ## 11. The plan to a profit test
 
 Proposed 2026-09-29. Why we have been circling: the only out-of-sample data is
@@ -363,8 +380,10 @@ thing that can say whether acting on alerts makes money.
   predicted from a CALM market (30/60-bar mid range < 0.5%, last 5 bars <
   0.1%, and candle high-low < 0.5% over every 20-bar slice), 1% within 15/30
   bars, entry the bar after? `amber/backtest/ignition.py`.
-  Verdict routes the next step: `precursor_found` / `signal_matched_by` ->
-  retarget the scanner to ignition (the product the owner described);
+  Verdict routes the next step: `timing_signal` -> retarget the scanner to
+  ignition (the product the owner described); `coin_choice_only` or
+  `precursor_found` / `signal_matched_by` carried by coin-level features ->
+  no timing information, treat as `no_precursor`;
   `no_precursor` -> 1m public bars cannot give early warning, D2 (order book,
   tick flow) is the only route; `underpowered` -> wait for more calm history.
   A verdict needs ≥20 independent moves in the test segment
