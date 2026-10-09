@@ -233,6 +233,10 @@ def _train_ignition_if_due(config: dict, now: float | None = None) -> bool:
     try:
         models_root.mkdir(parents=True, exist_ok=True)
         with SingleInstanceLock(models_root, "train"):
+            # Logged at the start too: the run takes ~10 minutes and the
+            # result line was the only evidence it had begun.
+            logger.info("ignition training started: %s days of features, ~10 min, normalisation pauses meanwhile",
+                        ign.get("train_days", 30))
             res = train_ignition(
                 Path(storage["features_dir"]), models_root,
                 days=float(ign.get("train_days", 30)),

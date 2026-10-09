@@ -116,6 +116,18 @@ class TestScannerHookIsIsolated(unittest.TestCase):
                                            StateStore(Path(td) / "state"))
             self.assertEqual(n, 0)
 
+    def test_waiting_for_the_first_model_is_logged_once(self):
+        from amber.pipeline import scanner_app
+
+        with tempfile.TemporaryDirectory() as td:
+            scanner_app._IGNITION_CACHE.update({"path": None, "scorer": None, "waiting_logged": False})
+            with self.assertLogs("amber.pipeline.scanner_app", level="INFO") as cm:
+                for _ in range(3):
+                    scanner_app._scan_ignition({"ignition": {"enabled": True}}, Path(td), Path(td) / "models",
+                                               Path(td) / "logs", StateStore(Path(td) / "state"))
+            waiting = [m for m in cm.output if "no model yet" in m]
+            self.assertEqual(len(waiting), 1)
+
     def test_disabled_does_nothing(self):
         from amber.pipeline import scanner_app
 

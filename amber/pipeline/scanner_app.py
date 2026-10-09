@@ -204,7 +204,7 @@ def _scan_shadow(
         return 0
 
 
-_IGNITION_CACHE: dict[str, Any] = {"path": None, "scorer": None}
+_IGNITION_CACHE: dict[str, Any] = {"path": None, "scorer": None, "waiting_logged": False}
 
 
 def _scan_ignition(
@@ -227,11 +227,17 @@ def _scan_ignition(
 
         path = latest_artifact_path(models_root)
         if path is None:
+            # Said once, so an empty log reads as "waiting", not "broken".
+            if not _IGNITION_CACHE["waiting_logged"]:
+                logger.info("ignition: no model yet, waiting for the daily training in amber-pipeline")
+                _IGNITION_CACHE["waiting_logged"] = True
             return 0
         if _IGNITION_CACHE["path"] != path:
             _IGNITION_CACHE.update({"path": path, "scorer": IgnitionScorer.load_latest(models_root)})
+            logger.info("ignition: model loaded %s", path.name)
         scorer = _IGNITION_CACHE["scorer"]
         if scorer is None:
+            logger.warning("ignition: model %s could not be loaded", path.name)
             return 0
         records = scan_ignition(features_root, models_root, logs_root, state, scorer=scorer)
         notify = [r for r in records if r.get("notify")]
@@ -240,9 +246,10 @@ def _scan_ignition(
 
             for rec in notify:
                 send_telegram_text(alert_text(rec))
-        if records:
-            logger.info("ignition: %s calm coins scored, %s alerts, %s shown", len(records),
-                        sum(r["alert"] for r in records), len(notify))
+        # Every scan, zeros included: silence would be indistinguishable from
+        # a scanner that never reached this code.
+        logger.info("ignition: %s calm coins scored, %s alerts, %s shown", len(records),
+                    sum(r["alert"] for r in records), len(notify))
         return len(notify)
     except Exception as exc:
         logger.warning("ignition scan failed: %s", exc)
