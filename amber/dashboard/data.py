@@ -333,3 +333,22 @@ def ledger_summary(logs_dir: str | Path) -> dict | None:
         return summarize_ledger(logs)
     except Exception:
         return None
+
+
+def ignition_view(logs_dir: str | Path, limit: int = 15) -> dict | None:
+    """Forward confirmation of ignition warnings plus the latest ones shown."""
+    from amber.common.jsonl import read_tail
+    from amber.signals.ignition_live import RECORDS_FILE, alert_text, load_summary
+
+    logs = Path(logs_dir)
+    if not (logs / RECORDS_FILE).exists():
+        return None
+    try:
+        recent = [r for r in read_tail(logs / RECORDS_FILE, 5000) if r.get("notify")][-limit:]
+        return {
+            # Precomputed by the pipeline every 30 min; never the full ledger here.
+            "summary": load_summary(logs) or {"verdict": "pending"},
+            "recent": [{**r, "text": alert_text(r)} for r in reversed(recent)],
+        }
+    except Exception:
+        return None

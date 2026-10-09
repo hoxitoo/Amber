@@ -100,6 +100,7 @@ def _load_everything(root_str: str) -> dict:
         "candle_stats": D.candle_stats(storage["raw_dir"], symbols),
         "drift": D.drift_report(storage["features_dir"], model, symbols),
         "ledger": D.ledger_summary(storage["logs_dir"]),
+        "ignition": D.ignition_view(storage["logs_dir"]),
     }
 
 
@@ -202,6 +203,48 @@ def _ledger_panel(summary: dict | None) -> None:
         "одного горизонта на любых монетах — один эпизод. «По свече» и «против свечи» — два механических "
         "правила, зафиксированных заранее; это бухгалтерия, Amber ордера не ставит."
     )
+
+
+def _ignition_panel(view: dict | None) -> None:
+    """Ignition warnings: calm now, a sharp move likely. Shadow channel."""
+    _section("Предупреждения о зарождении", "тест · в Telegram не уходят, пока проверка вперёд не подтвердит")
+    if not view:
+        st.info("Записей пока нет: модель зарождения обучается раз в сутки, сканер начинает после первого обучения.")
+        return
+    s = view["summary"]
+    verdict_ru = {
+        "no_alerts_yet": "предупреждений ещё не было",
+        "underpowered": f"мало данных (нужно ≥{s.get('min_days')} дней и ≥{s.get('min_move_episodes')} ходов)",
+        "confirmed": "подтверждено",
+        "not_confirmed": "не подтверждено",
+        "pending": "сводка появится в течение 30 мин",
+    }
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Дней проверки", f"{s.get('days', 0)}")
+    c2.metric("Предупреждений (показано)", f"{s.get('alerts', 0)} ({s.get('notified', 0)})")
+    c3.metric(
+        "Ход после предупреждения",
+        "—" if s.get("precision") is None else f"{s['precision'] * 100:.1f}%",
+        delta=None if s.get("expected_precision") is None else f"обычно {s['expected_precision'] * 100:.1f}%",
+        delta_color="off",
+    )
+    c4.metric("Вывод", verdict_ru.get(s.get("verdict"), s.get("verdict", "—")))
+    if s.get("lift") is not None:
+        st.caption(
+            f"lift {s['lift']:.2f}, нижняя граница {s['lift_low']:.2f} по {s.get('alert_episodes', 0)} эпизодам. "
+            "«Обычно» — частота хода у обычных спокойных баров тех же монет, так что выбор монеты не засчитывается."
+        )
+    if view["recent"]:
+        st.dataframe(
+            pd.DataFrame([
+                {"время": datetime.fromtimestamp(r["event_ts"] / 1000, tz=timezone.utc).strftime("%m-%d %H:%M"),
+                 "символ": r["symbol"], "P(ход)": round(r["prob"], 3),
+                 "обычно": None if r.get("coin_base") is None else round(r["coin_base"], 3),
+                 "факторы": ", ".join(r.get("factors") or [])}
+                for r in view["recent"]
+            ]),
+            width="stretch", hide_index=True,
+        )
 
 
 root = D.find_project_root()
@@ -316,6 +359,7 @@ with tab_overview:
         )
 
     _ledger_panel(state.get("ledger"))
+    _ignition_panel(state.get("ignition"))
 
 # --- Model quality -----------------------------------------------------------
 with tab_model:

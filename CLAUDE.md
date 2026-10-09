@@ -386,6 +386,23 @@ episode count, and what it does and does not show.
   Needs forward confirmation on data the check never saw before any live
   retargeting.
 
+- **2026-10-09** — owner approved the live ignition channel. Built
+  (`amber/signals/ignition_live.py`), **not yet deployed**: daily m30 model
+  (30 days; earliest 85% fit, latest 15% Platt + per-coin top-1% threshold,
+  i.e. "within coin" live), scored every scan on each coin's newest bar with
+  the SAME `calm_now`/`feature_vector` as the check (parity test on 60 bars);
+  every calm bar recorded with alert/notify (30-min pause per coin), resolved
+  by the generalised ledger into `ignition_ledger.jsonl`; forward verdict
+  `summarize_ignition`: alerts vs the hits expected from calm bars of the same
+  coins, one comparison, one-sided 95%, needs ≥7 days and ≥20 independent
+  moves (fixed before any record existed). Telegram off (`ignition.telegram:
+  false`). Measured here: daily training at 30 days x 27 symbols peak 423 MB,
+  ~9.5 min (normalisation pauses that long once a day; collector buffers);
+  scan hook 1.3-2.4 s per minute, scanner +134 MB; record 263 B, ~7,800 calm
+  bars/day (inferred) -> ~2 MB/day records + ~3 MB/day ledger, unbounded:
+  revisit retention when the verdict is in. Dashboard reads a summary the
+  pipeline publishes every 30 min, never the full ignition ledger.
+
 ## 11. The plan to a profit test
 
 Proposed 2026-09-29. Why we have been circling: the only out-of-sample data is
@@ -437,3 +454,8 @@ thing that can say whether acting on alerts makes money.
   A verdict needs ≥20 independent moves in the test segment
   (`ignition.MIN_POSITIVE_EPISODES`); run with `--days 30` or more, because a
   1% move from calm is a ~1-in-1000-minutes event.
+- **F. Live ignition channel** (2026-10-09, after `timing_signal:model`):
+  shadow warnings + forward ledger, `scripts/run_ignition_report.py`, dashboard
+  panel. `confirmed` -> turn on Telegram (`ignition.telegram: true`) with the
+  owner; `not_confirmed` -> the 10-09 signal was a one-run artefact, back to
+  D2; `underpowered` -> keep it running.

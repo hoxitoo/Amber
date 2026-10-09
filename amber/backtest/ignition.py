@@ -249,6 +249,38 @@ class _Rolling:
         return self._cache[key]
 
 
+def calm_now(
+    roll: "_Rolling",
+    synthetic_prefix: Sequence[int],
+    candle_ranges: Sequence[float],
+    i: int,
+    *,
+    window: int,
+    calm_pct: float,
+) -> bool:
+    """Is bar `i` calm, judged only on bars up to and including `i`?
+
+    The single definition shared by the check (which adds the forward window
+    on top) and the live scanner (which cannot see forward). A second copy
+    here is how a live channel would quietly score a different population
+    from the one that was validated.
+    """
+    lo = i - window + 1
+    if lo < 0 or synthetic_prefix[i + 1] - synthetic_prefix[lo] > 0:
+        return False
+    prices = roll.prices
+    p_now = prices[i]
+    pmin = roll.get(window, False)[i]
+    if p_now <= 0 or pmin <= 0:
+        return False
+    if (roll.get(window, True)[i] - pmin) / p_now > calm_pct:
+        return False
+    if (roll.get(RECENT_BARS, True)[i] - roll.get(RECENT_BARS, False)[i]) / p_now > calm_pct * RECENT_FRACTION:
+        return False
+    ends = set(range(i, lo + CANDLE_SLICE - 2, -CANDLE_SLICE)) | {lo + CANDLE_SLICE - 1}
+    return not any(candle_ranges[e] >= calm_pct for e in ends if 0 <= e <= i)
+
+
 def _calm_labels_fast(
     roll: _Rolling,
     synthetic_prefix: Sequence[int],
@@ -269,8 +301,6 @@ def _calm_labels_fast(
     assert window >= RECENT_BARS
     prices = roll.prices
     n = len(prices)
-    pmax, pmin = roll.get(window, True), roll.get(window, False)
-    rmax, rmin = roll.get(RECENT_BARS, True), roll.get(RECENT_BARS, False)
     fmax, fmin = roll.get(horizon, True), roll.get(horizon, False)
     out: list[tuple[int, int, int, int]] = []
     considered = 0
@@ -280,16 +310,8 @@ def _calm_labels_fast(
             continue
         considered += 1
         if synthetic_prefix[hi + 1] - synthetic_prefix[lo] > 0:
-            continue
-        p_now = prices[i]
-        if p_now <= 0 or pmin[i] <= 0:
-            continue
-        if (pmax[i] - pmin[i]) / p_now > calm_pct:
-            continue
-        if (rmax[i] - rmin[i]) / p_now > calm_pct * RECENT_FRACTION:
-            continue
-        ends = set(range(i, lo + CANDLE_SLICE - 2, -CANDLE_SLICE)) | {lo + CANDLE_SLICE - 1}
-        if any(candle_ranges[e] >= calm_pct for e in ends if 0 <= e <= i):
+            continue  # a gap in the forward window would read as "no move"
+        if not calm_now(roll, synthetic_prefix, candle_ranges, i, window=window, calm_pct=calm_pct):
             continue
         entry = prices[i + 1]
         # Bars i+2 .. i+1+horizon, measured from the entry bar, as label_path.
@@ -357,7 +379,10 @@ def _lead_table(features_dir: Path, symbol: str, want: int) -> dict[int, tuple[f
     d = features_dir / symbol
     if not d.is_dir():
         return {}
-    rows = _load_symbol(d, want)
+    return lead_from_rows(_load_symbol(d, want))
+
+
+def lead_from_rows(rows: list[dict[str, Any]]) -> dict[int, tuple[float, float, float]]:
     prices = [float(r.get("mid_price", 0.0) or 0.0) for r in rows]
     out: dict[int, tuple[float, float, float]] = {}
     for i, r in enumerate(rows):
@@ -390,6 +415,20 @@ def _hour_features(prices: Sequence[float], notional: Sequence[float], roll: _Ro
         ratio = last_hour / (day / hours) if day > 0 else 0.0
         out.append((r240, (r240 / r1440) if r1440 > 0 else 0.0, ret240, ratio))
     return out
+
+
+def feature_vector(
+    row: dict[str, Any],
+    btc: dict[int, tuple[float, float, float]],
+    eth: dict[int, tuple[float, float, float]],
+    hour: tuple[float, ...],
+) -> list[float]:
+    """The row in FEATURES order. Training and live scoring both build it here."""
+    ts = int(row.get("ts", 0) or 0)
+    b = btc.get(ts, (0.0, 0.0, 0.0))
+    e = eth.get(ts, (0.0, 0.0, 0.0))
+    return ([float(row.get(name, 0.0) or 0.0) for name in MODEL_FEATURES]
+            + [b[0], b[1], b[2], e[1]] + list(hour))
 
 
 def collect_arms(
@@ -443,15 +482,9 @@ def collect_arms(
             )
             arm.considered += considered
             for i, move, _up, _down in labelled:
-                src = rows[i]
-                ts = int(src.get("ts", 0) or 0)
-                b = btc.get(ts, (0.0, 0.0, 0.0))
-                e = eth.get(ts, (0.0, 0.0, 0.0))
-                arm.x.extend(float(src.get(name, 0.0) or 0.0) for name in MODEL_FEATURES)
-                arm.x.extend((b[0], b[1], b[2], e[1]))
-                arm.x.extend(hours[i])
+                arm.x.extend(feature_vector(rows[i], btc, eth, hours[i]))
                 arm.y.append(move)
-                arm.ts.append(ts)
+                arm.ts.append(int(rows[i].get("ts", 0) or 0))
                 arm.sym.append(sym_idx)
         del rows, prices, synthetic_prefix, ranges, roll, hours
     return arms, len(names), names, spreads

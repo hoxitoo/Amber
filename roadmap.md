@@ -353,6 +353,9 @@ retargeting the scanner to ignition and D2 (sub-minute data).
   more often; nothing says when). Added from data on disk: BTC/ETH lead,
   hour-scale build-up, liquid/thin split, a 6 h -> 4 h arm. If those are
   empty too: sub-minute trade features, then the order book (D2).
+- 2026-10-09: with those added -> `timing_signal:model` (m30 within coin,
+  lift 5.65, lower bound 1.39). One run, so a live shadow channel was built to
+  confirm it forward before anything is sent to Telegram.
 
 ### Backlog
 - [ ] T6 cross-exchange lead/lag features · A7 feature-list relocation.

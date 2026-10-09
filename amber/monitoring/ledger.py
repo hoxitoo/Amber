@@ -204,8 +204,15 @@ def _alert_fields(source: str, row: dict[str, Any]) -> dict[str, Any] | None:
     }
     if source == "model":
         fields["score"] = row.get("prob_move_calibrated")
-    else:
+    elif source == "rule":
         fields["score"] = row.get("range_atr_14")
+    else:
+        # Ignition records (amber/signals/ignition_live.py): every calm bar the
+        # scanner scored, with whether it alerted.
+        fields["score"] = row.get("score")
+        for key in ("alert", "notify", "prob", "threshold", "coin_base"):
+            if key in row:
+                fields[key] = row[key]
     return fields
 
 
@@ -218,8 +225,14 @@ def update_ledger(
     cost: float = DEFAULT_COST,
     expire_hours: float = DEFAULT_EXPIRE_HOURS,
     now_ms: int | None = None,
+    sources: dict[str, str] | None = None,
+    ledger_file: str = LEDGER_FILE,
+    state_key: str = STATE_KEY,
 ) -> int:
     """Resolve every alert whose horizon has elapsed; append to the ledger.
+
+    `sources`, `ledger_file` and `state_key` let a second ledger (ignition
+    warnings) reuse the same resolution without mixing into this one.
 
     Progress is a byte offset per source, advanced only past alerts that are
     finished, so a restart never scores an alert twice and never skips one.
@@ -228,13 +241,13 @@ def update_ledger(
     """
     now_ms = int(time.time() * 1000) if now_ms is None else now_ms
     try:
-        offsets = {k: int(v) for k, v in dict(state.get(STATE_KEY) or {}).items()}
+        offsets = {k: int(v) for k, v in dict(state.get(state_key) or {}).items()}
     except Exception:
         offsets = {}
     written = 0
-    ledger_path = logs_root / LEDGER_FILE
+    ledger_path = logs_root / ledger_file
 
-    for source, name in SOURCES.items():
+    for source, name in (sources or SOURCES).items():
         path = logs_root / name
         if source not in offsets:
             # First run: start at the end. signals.jsonl already holds weeks
@@ -289,7 +302,7 @@ def update_ledger(
             written += len(records)
         offsets[source] = offset
 
-    state.set(STATE_KEY, offsets)
+    state.set(state_key, offsets)
     return written
 
 

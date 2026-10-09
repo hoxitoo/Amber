@@ -70,6 +70,7 @@ def scan_once(
     gate: SignalGate,
     alert_limiter: AlertRateLimiter,
     shadow_gate: SignalGate | None = None,
+    ignition_state: StateStore | None = None,
 ) -> int:
     features_root = Path(config["storage"]["features_dir"])
     models_root = Path(config["storage"]["models_dir"])
@@ -158,6 +159,7 @@ def scan_once(
         logs_root, feature_rows, model, shadow_gate,
         min_warmup=min_warmup, spread_max_bps=float(thresholds.get("spread_bps_max", 30.0)),
     )
+    _scan_ignition(config, features_root, models_root, logs_root, ignition_state)
 
     logger.info(
         "scan finished universe=%s symbols=%s emitted=%s shadow=%s gate=%s",
@@ -202,6 +204,51 @@ def _scan_shadow(
         return 0
 
 
+_IGNITION_CACHE: dict[str, Any] = {"path": None, "scorer": None}
+
+
+def _scan_ignition(
+    config: dict[str, Any],
+    features_root: Path,
+    models_root: Path,
+    logs_root: Path,
+    state: StateStore | None,
+) -> int:
+    """Ignition warnings, a shadow channel beside the live scan.
+
+    Never allowed to break the real scan. The scorer is cached until a newer
+    artifact appears, so the booster is not rebuilt every minute.
+    """
+    ign = config.get("ignition", {}) if isinstance(config.get("ignition"), dict) else {}
+    if state is None or not ign.get("enabled", False):
+        return 0
+    try:
+        from amber.signals.ignition_live import IgnitionScorer, alert_text, latest_artifact_path, scan_ignition
+
+        path = latest_artifact_path(models_root)
+        if path is None:
+            return 0
+        if _IGNITION_CACHE["path"] != path:
+            _IGNITION_CACHE.update({"path": path, "scorer": IgnitionScorer.load_latest(models_root)})
+        scorer = _IGNITION_CACHE["scorer"]
+        if scorer is None:
+            return 0
+        records = scan_ignition(features_root, models_root, logs_root, state, scorer=scorer)
+        notify = [r for r in records if r.get("notify")]
+        if notify and ign.get("telegram", False):
+            from amber.alerts.telegram import send_telegram_text
+
+            for rec in notify:
+                send_telegram_text(alert_text(rec))
+        if records:
+            logger.info("ignition: %s calm coins scored, %s alerts, %s shown", len(records),
+                        sum(r["alert"] for r in records), len(notify))
+        return len(notify)
+    except Exception as exc:
+        logger.warning("ignition scan failed: %s", exc)
+        return 0
+
+
 def main(loop: bool = False) -> None:
     config = ConfigLoader(Path.cwd()).load_yaml("config/amber.yaml")
     thresholds_cfg = ConfigLoader(Path.cwd()).load_yaml("config/thresholds.yaml")["thresholds"]
@@ -229,7 +276,7 @@ def main(loop: bool = False) -> None:
     try:
         with SingleInstanceLock(Path(config["storage"]["state_dir"]) / "locks", "scanner"):
             while True:
-                scan_once(config, thresholds_cfg, gate, alert_limiter, shadow_gate)
+                scan_once(config, thresholds_cfg, gate, alert_limiter, shadow_gate, ignition_state=state)
                 if not loop:
                     break
                 time.sleep(interval)

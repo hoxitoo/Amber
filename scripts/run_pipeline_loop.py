@@ -145,6 +145,10 @@ def _recalibrate(config: dict) -> None:
         logger.info("calibration still healthy (worst ECE %.4f)", worst)
 
 
+IGNITION_SUMMARY_SEC = 1800
+_ignition_summary_at = [0.0]
+
+
 def _update_ledger(config: dict) -> None:
     """Score every alert whose horizon has elapsed (CLAUDE.md section 11).
 
@@ -168,6 +172,79 @@ def _update_ledger(config: dict) -> None:
             logger.info("ledger: scored %s alerts", n)
     except Exception as exc:  # bookkeeping must never stop the pipeline
         logger.error("ledger update failed: %s", exc)
+
+    # Ignition warnings: every calm bar the scanner scored, resolved the same
+    # way, into a ledger of its own.
+    try:
+        from amber.signals.ignition_live import LEDGER_FILE, LEDGER_STATE_KEY, RECORDS_FILE
+
+        n = update_ledger(
+            Path(storage["logs_dir"]),
+            Path(storage["raw_dir"]),
+            StateStore(Path(storage["state_dir"])),
+            lag_bars=int(led.get("lag_bars", 1)),
+            cost=float(led.get("cost", 0.0009)),
+            expire_hours=float(led.get("expire_hours", 6)),
+            sources={"calm": RECORDS_FILE},
+            ledger_file=LEDGER_FILE,
+            state_key=LEDGER_STATE_KEY,
+        )
+        if n:
+            logger.info("ignition ledger: scored %s calm bars", n)
+        now = time.time()
+        if now - _ignition_summary_at[0] >= IGNITION_SUMMARY_SEC:
+            from amber.signals.ignition_live import save_summary, summarize_ignition
+
+            _ignition_summary_at[0] = now
+            save_summary(Path(storage["logs_dir"]), summarize_ignition(Path(storage["logs_dir"])))
+    except Exception as exc:
+        logger.error("ignition ledger update failed: %s", exc)
+
+
+# A failed or skipped attempt (not enough calm history yet) leaves no
+# artifact, which would read as "due" on every 90-second cycle — each one
+# reading ~1.3 GB of features. Attempts are spaced at least an hour apart.
+IGNITION_RETRY_SEC = 3600
+_ignition_last_try = [0.0]
+
+
+def _train_ignition_if_due(config: dict, now: float | None = None) -> bool:
+    """Daily ignition model (amber/signals/ignition_live.py).
+
+    Takes the retrain lock: reading 30 days of features and training is the
+    second-heaviest job on the box and must not overlap the hourly retrain or
+    a manual one. Normalisation pauses for its duration (minutes), and the
+    WS collector keeps buffering meanwhile.
+    """
+    from amber.signals.ignition_live import artifact_age_min, train_ignition
+
+    ign = config.get("ignition", {}) if isinstance(config.get("ignition"), dict) else {}
+    if not ign.get("enabled", False):
+        return False
+    storage = config["storage"]
+    models_root = Path(storage["models_dir"])
+    age = artifact_age_min(models_root)
+    if age is not None and age < float(ign.get("retrain_min", 1440)):
+        return False
+    now = time.time() if now is None else now
+    if now - _ignition_last_try[0] < IGNITION_RETRY_SEC:
+        return False
+    _ignition_last_try[0] = now
+    try:
+        models_root.mkdir(parents=True, exist_ok=True)
+        with SingleInstanceLock(models_root, "train"):
+            res = train_ignition(
+                Path(storage["features_dir"]), models_root,
+                days=float(ign.get("train_days", 30)),
+                min_warmup_bars=int(config.get("labeling", {}).get("min_warmup_bars", 60)),
+                budget=float(ign.get("budget", 0.01)),
+            )
+        logger.info("ignition training: %s", res)
+    except AlreadyRunning:
+        logger.info("ignition training deferred: another training job holds the lock")
+    except Exception as exc:
+        logger.error("ignition training failed: %s", exc)
+    return True
 
 
 def main() -> None:
@@ -237,6 +314,8 @@ def _run(cfg: dict) -> None:
             except Exception as exc:
                 logger.error("auto-retrain failed: %s", exc)
             last_retrain = now
+
+        _train_ignition_if_due(cfg)
 
         if recal_min > 0 and (now - last_recal) >= recal_min * 60:
             try:
