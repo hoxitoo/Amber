@@ -88,6 +88,21 @@ class TestTrainAndScore(unittest.TestCase):
             self.assertIsNone(IL.latest_artifact_path(Path(td) / "m"))
 
 
+class TestLeadersMustHaveTheSameMinute(unittest.TestCase):
+    def test_a_coin_ahead_of_btc_waits_instead_of_reading_zero_lead(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = _market(td, n=12000)
+            models = Path(td) / "models"
+            self.assertEqual(IL.train_ignition(root, models, days=0)["status"], "ok")
+            scorer = IL.IgnitionScorer.load_latest(models)
+            tails = IL.read_tails(root)
+            full = {r["symbol"] for r in scorer.score_rows(tails)}
+            self.assertTrue(full, "fixture has no calm coin on its last bar")
+            behind = {**tails, "BTCUSDT": tails["BTCUSDT"][:-1]}  # BTC one minute behind
+            lagged = {r["symbol"] for r in scorer.score_rows(behind)}
+            self.assertFalse(lagged - {"BTCUSDT"}, "scored alts against a BTC row that does not exist yet")
+
+
 class TestScannerHookIsIsolated(unittest.TestCase):
     def test_a_broken_artifact_never_breaks_the_scan(self):
         from amber.pipeline import scanner_app

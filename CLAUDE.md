@@ -402,6 +402,10 @@ episode count, and what it does and does not show.
   bars/day (inferred) -> ~2 MB/day records + ~3 MB/day ledger, unbounded:
   revisit retention when the verdict is in. Dashboard reads a summary the
   pipeline publishes every 30 min, never the full ignition ledger.
+  Review before deploy found one bug: the pipeline writes features symbol by
+  symbol, so a scan could see an alt's new minute before BTC's and read the
+  lead features as 0 where training always had values. Such coins now wait
+  for the next scan; a test fails without it.
 
 ## 11. The plan to a profit test
 

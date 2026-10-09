@@ -274,6 +274,14 @@ class IgnitionScorer:
         min_warmup = int(self.art.get("min_warmup_bars", 60))
         out: list[dict[str, Any]] = []
         for symbol, rows in sorted(rows_by_symbol.items()):
+            ts = int(rows[-1].get("ts", 0) or 0) if rows else 0
+            if (btc and ts not in btc) or (eth and ts not in eth):
+                # The pipeline writes features symbol by symbol, so a scan can
+                # land after this coin's new minute and before BTC's. The lead
+                # features would silently read 0 ("BTC did not move") where
+                # training always had the real values. Not marked seen, so
+                # the next scan scores it once BTC/ETH have caught up.
+                continue
             x = live_vector(rows, btc, eth, window=window, calm_pct=calm_pct, min_warmup_bars=min_warmup)
             if x is None:
                 continue
