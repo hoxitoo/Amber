@@ -407,6 +407,16 @@ episode count, and what it does and does not show.
   lead features as 0 where training always had values. Such coins now wait
   for the next scan; a test fails without it.
 
+- **2026-10-09, ignition channel live on the box**: first model trained
+  17:24 UTC (artifact 280 KB); scanner scores ~8 calm coins per minute, 0
+  alerts at the first reading (expected: top 1% per coin); ignition ledger
+  resolving from 17:57 (30 min after the first records), 1-4 bars per cycle.
+  Open check: whether the ledger keeps pace with ~8 records/min (owner to
+  compare `wc -l` of ignition_calm.jsonl vs ignition_ledger.jsonl an hour
+  later; a growing gap > 600 lines means it falls behind). Earliest verdict
+  2026-10-16. Logging made explicit (d188867) after an empty grep read as
+  broken.
+
 ## 11. The plan to a profit test
 
 Proposed 2026-09-29. Why we have been circling: the only out-of-sample data is
