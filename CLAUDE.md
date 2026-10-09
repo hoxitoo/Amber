@@ -366,6 +366,26 @@ episode count, and what it does and does not show.
   min. Run pending. Next after this: sub-minute trade features, then the
   order book.
 
+- **2026-10-09, ignition run with lead/hour features** (30 days, z 3.79,
+  655 comparisons): first **`timing_signal:model`**. m30/all (94 moves, base
+  1.24%): model within coin lift 5.65, **lo 1.39**; m30/liquid (51 moves):
+  lift 7.70, lo 1.51. No single feature clears it within coin (best
+  `rank:-ret_60` lo 0.14): the timing information is in the combination.
+  Coin choice is still the larger part: globally model lift 7.64 / lo 2.46
+  vs static per-coin 10.41 / 2.50. m30/thin, m60: no_precursor; h6:
+  underpowered (13 moves). Factors (global PR-AUC drop, mixes coin and time):
+  range_atr_14 52%, hr_range_240 25%, bb_width 7%, hr_notional_60_1440 6.5%,
+  hr_compress 6%, hr_absret_240 5%, spread 4%, btc_range_atr_14 3.5%. The
+  previous run without the hour/lead features had model-within lo 0.72, so
+  the hour-scale features are what lifted it. Reading: "this coin was
+  turbulent over the last hours, has been calm for 30 min" precedes a 1%
+  move ~7x more often than its own base. Precision at the 1% budget is
+  ~9.5% (inferred ~75 alerts/day, ~7 followed by a move). Caveats: one run;
+  the ignition check has been re-specified several times (candle filter,
+  coin controls, new features), and multiplicity ACROSS runs is not in z.
+  Needs forward confirmation on data the check never saw before any live
+  retargeting.
+
 ## 11. The plan to a profit test
 
 Proposed 2026-09-29. Why we have been circling: the only out-of-sample data is
