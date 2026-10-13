@@ -417,6 +417,21 @@ episode count, and what it does and does not show.
   2026-10-16. Logging made explicit (d188867) after an empty grep read as
   broken.
 
+- **2026-10-13, first forward ignition reading** (~4 days live, 5 distinct
+  UTC days because 10-09 counts): 25,412 resolved calm bars, 61 independent
+  moves from calm; 200 threshold crossings (110 would have been shown, ~22
+  per day), 53 alert episodes. Move within 30 min after an alert **8.00%**
+  (~16 hits) vs **1.58%** expected from calm bars of the same coins: lift
+  5.06, exact one-sided lower bound **1.83** (reproduced here from the
+  printed numbers). Verdict `underpowered` only because of the pre-registered
+  day floor (move floor already met). Consistent with the check's within-coin
+  lift 5.65 (lo 1.39). Not comparable: the alert text's "обычно" (training
+  base, bid/ask mid) and the report's 1.58% (forward base, candle wicks).
+  Direction still not predicted. Ledger pace: 25k resolved in ~4 days is
+  plausible but not checked against `ignition_calm.jsonl` (still asked).
+  Because `days` counts distinct UTC days, the day floor is met on 10-15,
+  not 10-16 as written above; the rule stands as fixed.
+
 ## 11. The plan to a profit test
 
 Proposed 2026-09-29. Why we have been circling: the only out-of-sample data is
