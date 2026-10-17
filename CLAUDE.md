@@ -451,6 +451,28 @@ episode count, and what it does and does not show.
   second mode (4H/1D pullback-to-support on BTC/ETH); proposed as a
   read-only historical backtest first, not started.
 
+- **2026-10-17, Telegram on + bracket money test built** (pushed, deploy
+  pending). `ignition.telegram: true`; the owner created a bot, credentials go
+  in `/etc/amber/alerts.env` (root, 600; never shown to me). Only ignition
+  warnings go to Telegram (`alerts.channels` still console only), ~38/day
+  (inferred). One failed send ends that scan's sending, so a Telegram outage
+  cannot hold the scan for minutes. Money test, fixed before any outcome:
+  breakout **bracket** on every shown warning — stops +-0.3% from the entry
+  bar's close, first fill cancels the other, target +-1% from it, stop back at
+  it, 30-bar window, unfilled = no trade; costs **15 bps** round trip (both
+  sides taker, Bybit base 0.055% a side, + 4 bps slippage), gross stored too.
+  Verdict `summarize_bracket`: episode-clustered mean net per trade, one
+  comparison, one-sided 95% lower bound > 0, ≥30 episodes and ≥7 days. Null
+  fixtures: the bar conventions match the sub-minute path to 0.00 bps over
+  4,000 random-walk brackets; booking stops at their exact level was worth
+  +2.3 bps there (what the slippage allowance covers); a random walk at the
+  booked cost reads `not_shown_profitable`. Warnings resolved before the
+  bracket existed are scored once by `scripts/backfill_ignition_bracket.py`
+  (same entry bar, checked; separate file; ledger never rewritten). Measured
+  here at 27 symbols x 100k-candle files, 60k ledger rows: peak 224 MB, 6 s.
+  Telegram text now gives the bracket levels from the bar's mid price (the
+  ledger uses the next bar's close; a few bps apart).
+
 ## 11. The plan to a profit test
 
 Proposed 2026-09-29. Why we have been circling: the only out-of-sample data is
@@ -506,4 +528,10 @@ thing that can say whether acting on alerts makes money.
   shadow warnings + forward ledger, `scripts/run_ignition_report.py`, dashboard
   panel. `confirmed` -> turn on Telegram (`ignition.telegram: true`) with the
   owner; `not_confirmed` -> the 10-09 signal was a one-run artefact, back to
-  D2; `underpowered` -> keep it running.
+  D2; `underpowered` -> keep it running. **Confirmed 2026-10-17**; Telegram on.
+- **G. Does the warning pay** (2026-10-17): the breakout bracket above, in the
+  ignition ledger, shown in `run_ignition_report.py` and the dashboard.
+  `profitable` -> the owner may trade it by hand at small size; Amber still
+  places no orders. `not_shown_profitable` -> the warning is real but this
+  way of trading it does not beat 15 bps; say so, do not re-tune the bracket on
+  the same data (any new rule is a new forward test).

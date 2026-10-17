@@ -176,7 +176,7 @@ def _update_ledger(config: dict) -> None:
     # Ignition warnings: every calm bar the scanner scored, resolved the same
     # way, into a ledger of its own.
     try:
-        from amber.signals.ignition_live import LEDGER_FILE, LEDGER_STATE_KEY, RECORDS_FILE
+        from amber.signals.ignition_live import BRACKET_TRIGGER, LEDGER_FILE, LEDGER_STATE_KEY, RECORDS_FILE
 
         n = update_ledger(
             Path(storage["logs_dir"]),
@@ -188,6 +188,7 @@ def _update_ledger(config: dict) -> None:
             sources={"calm": RECORDS_FILE},
             ledger_file=LEDGER_FILE,
             state_key=LEDGER_STATE_KEY,
+            bracket=BRACKET_TRIGGER,
         )
         if n:
             logger.info("ignition ledger: scored %s calm bars", n)

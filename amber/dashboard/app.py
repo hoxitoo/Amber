@@ -207,7 +207,7 @@ def _ledger_panel(summary: dict | None) -> None:
 
 def _ignition_panel(view: dict | None) -> None:
     """Ignition warnings: calm now, a sharp move likely. Shadow channel."""
-    _section("Предупреждения о зарождении", "тест · в Telegram не уходят, пока проверка вперёд не подтвердит")
+    _section("Предупреждения о зарождении", "проверка вперёд: опережают ли ходы, и окупается ли брекет")
     if not view:
         st.info("Записей пока нет: модель зарождения обучается раз в сутки, сканер начинает после первого обучения.")
         return
@@ -233,6 +233,17 @@ def _ignition_panel(view: dict | None) -> None:
         st.caption(
             f"lift {s['lift']:.2f}, нижняя граница {s['lift_low']:.2f} по {s.get('alert_episodes', 0)} эпизодам. "
             "«Обычно» — частота хода у обычных спокойных баров тех же монет, так что выбор монеты не засчитывается."
+        )
+    b = s.get("bracket")
+    if b:
+        bracket_ru = {"underpowered": "мало данных", "profitable": "прибыльно",
+                      "not_shown_profitable": "прибыльность не показана"}
+        mean = "—" if b.get("mean_net") is None else f"{b['mean_net'] * 1e4:+.1f} bps"
+        low = "—" if b.get("mean_net_low") is None else f"{b['mean_net_low'] * 1e4:+.1f} bps"
+        st.caption(
+            f"Брекет ±{b['trigger'] * 100:.1f}% на показанных: сработал {b['filled']} из {b['shown_scored']}, "
+            f"на сделку {mean} (нижняя граница {low}), {b['episodes']} эпизодов за {b['days']} дн. — "
+            f"{bracket_ru.get(b['verdict'], b['verdict'])}"
         )
     if view["recent"]:
         st.dataframe(

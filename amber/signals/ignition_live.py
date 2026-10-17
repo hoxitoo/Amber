@@ -15,9 +15,14 @@ shadow channel, so it is confirmed or refuted on data the check never saw:
   uses, then scored. Every calm bar is recorded, alerting or not, so the
   forward ledger can measure the base rate it is compared with.
 
-Nothing here is sent to Telegram unless `ignition.telegram` is true, and the
-plan (CLAUDE.md section 11) is to keep it false until the forward ledger
-confirms the signal over at least 7 days.
+Nothing here is sent to Telegram unless `ignition.telegram` is true. It was
+kept false until the forward ledger confirmed the signal (2026-10-17: lift
+4.29, lower bound 2.14, 133 episodes over 9 days), and is true since.
+
+Confirmation says warnings precede moves, not that they pay. Every shown
+warning is therefore also traded, on paper, by one breakout bracket fixed
+before any of its outcomes existed (`BRACKET_TRIGGER`, ledger.bracket_trade);
+`summarize_bracket` gives its money verdict.
 """
 
 from __future__ import annotations
@@ -58,6 +63,15 @@ MIN_COIN_CALIB_ROWS = 100
 MIN_TRAIN_DAYS = 7
 MIN_TRAIN_POSITIVES = 30
 TAIL_ROWS = _HOUR_CONTEXT + SPEC.window + 10
+# Breakout bracket traded on every shown warning (ledger.bracket_trade): stops
+# 0.3% either side of the price, target the warned-of 1% from it, stop back at
+# it. Fixed 2026-10-17, before any bracket outcome existed. 0.3% sits outside
+# what calm allows in the last 5 bars (0.1%) and inside the 30-bar calm range
+# (0.5%), so a fill means the calm has broken.
+BRACKET_TRIGGER = 0.003
+# Warnings resolved before the bracket existed, re-scored once from the
+# candles on disk by scripts/backfill_ignition_bracket.py.
+BRACKET_BACKFILL_FILE = "ignition_bracket_backfill.jsonl"
 
 # Plain-language names for the factors shown with an alert.
 FACTOR_NAMES_RU = {
@@ -302,6 +316,7 @@ class IgnitionScorer:
                 "horizon_min": int(self.spec["horizon"]),
                 "target_up_pct": float(self.spec["barrier"]),
                 "model_run_id": self.art.get("run_id"),
+                "price": float(last.get("mid_price", 0.0) or 0.0),
             }
             if alert:
                 rec["factors"] = self._factors(x)
@@ -382,7 +397,29 @@ def alert_text(rec: dict[str, Any]) -> str:
     return (
         f"{rec['symbol']}: сейчас спокойно. Вероятность хода ≥{rec['target_up_pct'] * 100:.0f}% в любую сторону "
         f"за {rec['horizon_min']} мин — {rec['prob'] * 100:.1f}%{base_txt}. Направление не прогнозируется. "
-        f"Факторы: {factors}. [тест]"
+        f"Факторы: {factors}.{_bracket_text(rec)}"
+    )
+
+
+def _bracket_text(rec: dict[str, Any]) -> str:
+    """The levels of the bracket the ledger books, so a person can place it.
+
+    Records written before 2026-10-17 carry no price; their text has no levels.
+    """
+    price = float(rec.get("price", 0.0) or 0.0)
+    if price <= 0:
+        return ""
+
+    def fmt(v: float) -> str:
+        return f"{v:.{max(2, 5 - int(math.floor(math.log10(v))))}f}" if v > 0 else "-"
+
+    t, b = BRACKET_TRIGGER, float(rec.get("target_up_pct", 0.01))
+    return (
+        f"\nЕсли торговать брекет (так его считает журнал): цена {fmt(price)}; "
+        f"покупка-стоп {fmt(price * (1 + t))}, продажа-стоп {fmt(price * (1 - t))}; "
+        f"сработал один — второй отменить; цель {fmt(price * (1 + b))} / {fmt(price * (1 - b))}, "
+        f"стоп — обратно на {fmt(price)}; не сработал за {rec['horizon_min']} мин — отменить оба. "
+        "Прибыльность брекета ещё проверяется."
     )
 
 
@@ -458,7 +495,77 @@ def summarize_ignition(logs_root: Path, *, since_ms: int | None = None) -> dict[
         out["verdict"] = "confirmed"
     else:
         out["verdict"] = "not_confirmed"
+    out["bracket"] = summarize_bracket(rows, _read_backfill(Path(logs_root)), horizon)
     return out
+
+
+def _read_backfill(logs_root: Path) -> dict[tuple[str, int], dict[str, Any]]:
+    path = logs_root / BRACKET_BACKFILL_FILE
+    out: dict[tuple[str, int], dict[str, Any]] = {}
+    if not path.exists():
+        return out
+    with path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            try:
+                r = json.loads(line)
+                out[(str(r["symbol"]), int(r["event_ts"]))] = r
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+                continue
+    return out
+
+
+def summarize_bracket(
+    rows: list[dict[str, Any]],
+    backfill: dict[tuple[str, int], dict[str, Any]],
+    horizon: int,
+) -> dict[str, Any]:
+    """Does trading the bracket on every shown warning pay, after costs?
+
+    One pre-registered rule, so one comparison: the episode-clustered mean net
+    result per trade must have a one-sided 95% lower bound above 0, over at
+    least `ledger.MIN_EPISODES` episodes and `ledger.MIN_DAYS` days — the same
+    floors the main ledger's money verdict uses. Unfilled brackets are not
+    trades and are counted separately.
+    """
+    from amber.backtest.label_sweep import family_z
+    from amber.monitoring.ledger import BRACKET_COST, DAY_MS, MIN_DAYS, MIN_EPISODES, _episode_means, _mean_low
+
+    shown = []
+    for r in rows:
+        if not int(r.get("notify", 0)):
+            continue
+        if "bracket_net" not in r:
+            b = backfill.get((str(r["symbol"]), int(r["event_ts"])))
+            if b is None:
+                continue  # resolved before the bracket existed, not yet backfilled
+            r = {**r, "bracket_side": b.get("bracket_side"), "bracket_net": b.get("bracket_net")}
+        shown.append(r)
+    traded = [r for r in shown if r.get("bracket_net") is not None]
+    nets = [float(r["bracket_net"]) for r in traded]
+    ep_means = _episode_means(traded, "bracket_net", horizon)
+    low = _mean_low(ep_means, family_z(1))
+    days = len({int(r["event_ts"]) // DAY_MS for r in traded})
+    if len(ep_means) < MIN_EPISODES or days < MIN_DAYS:
+        verdict = "underpowered"
+    elif low is not None and low > 0:
+        verdict = "profitable"
+    else:
+        verdict = "not_shown_profitable"
+    return {
+        "trigger": BRACKET_TRIGGER,
+        "cost": BRACKET_COST,
+        "shown_scored": len(shown),
+        "filled": len(traded),
+        "wins": sum(1 for v in nets if v > 0),
+        "mean_net": (sum(nets) / len(nets)) if nets else None,
+        "total_net": sum(nets),
+        "mean_net_low": low,
+        "episodes": len(ep_means),
+        "days": days,
+        "min_episodes": MIN_EPISODES,
+        "min_days": MIN_DAYS,
+        "verdict": verdict,
+    }
 
 
 SUMMARY_FILE = "ignition_summary.json"
@@ -494,7 +601,7 @@ def format_ignition_summary(s: dict[str, Any]) -> str:
         "not_confirmed": "НЕ подтверждено: на новых данных предупреждения не лучше обычной тишины тех же монет",
     }
     lines = [
-        "Предупреждения о зарождении — проверка вперёд (в Telegram не уходят)",
+        "Предупреждения о зарождении — проверка вперёд",
         f"спокойных баров: {s['calm_bars']} · дней: {s['days']} · независимых ходов из тишины: {s['move_episodes']}",
         f"предупреждений (порог): {s['alerts']} · показано бы человеку (пауза 30 мин): {s['notified']}",
     ]
@@ -505,4 +612,28 @@ def format_ignition_summary(s: dict[str, Any]) -> str:
             f"({s['alert_episodes']} эпизодов)"
         )
     lines.append(f"ИТОГ: {s['verdict']} — {verdicts.get(s['verdict'], '')}")
+    b = s.get("bracket")
+    if b:
+        lines += ["", *format_bracket(b)]
     return "\n".join(lines)
+
+
+def format_bracket(b: dict[str, Any]) -> list[str]:
+    def bps(v: Any) -> str:
+        return "-" if v is None else f"{v * 1e4:+.1f} bps"
+
+    verdicts = {
+        "underpowered": f"мало данных: нужно ≥{b['min_episodes']} эпизодов сделок за ≥{b['min_days']} дней",
+        "profitable": "ПРИБЫЛЬНО: нижняя граница результата на сделку выше нуля после комиссий",
+        "not_shown_profitable": "прибыльность НЕ показана: нижняя граница результата на сделку не выше нуля",
+    }
+    win = f"{b['wins'] / b['filled'] * 100:.0f}%" if b["filled"] else "-"
+    return [
+        f"Брекет на показанных предупреждениях (стопы ±{b['trigger'] * 100:.1f}%, цель 1%, стоп на цене "
+        f"предупреждения, издержки {b.get('cost', 0) * 100:.2f}% на круг):",
+        f"оценено показанных: {b['shown_scored']} · сработал брекет: {b['filled']} · выигрышных: {win} · "
+        f"эпизодов: {b['episodes']} · дней: {b['days']}",
+        f"результат на сделку: среднее {bps(b['mean_net'])}, нижняя граница {bps(b['mean_net_low'])} · "
+        f"сумма {b['total_net'] * 100:+.2f}% (по 1 позиции на сделку)",
+        f"ИТОГ брекета: {b['verdict']} — {verdicts.get(b['verdict'], '')}",
+    ]

@@ -62,6 +62,15 @@ RULES = ("momentum", "fade")
 
 # Round trip, as the backtest books it: 5 bps slippage + 4 bps fee.
 DEFAULT_COST = 0.0009
+# Round trip for the ignition bracket (`bracket_trade`), which enters on a stop
+# order and usually exits on one: both sides pay the taker fee (Bybit's base
+# tier is 0.055% a side, 11 bps) and stop fills slip past their level. On a
+# 20-step random walk, booking stops at their exact level instead of where the
+# path actually crossed was worth +2.3 bps a trade (bracket_trade matched the
+# exact-level path to 0.00 bps, so that is all the slippage there is to price
+# in); 4 bps are allowed. 15 bps, fixed 2026-10-17 before any bracket outcome.
+# The gross result is stored too, so another fee tier can be read off it.
+BRACKET_COST = 0.0015
 DEFAULT_LAG_BARS = 1
 # An alert whose candles still have not arrived after this long is written off
 # as `no_data` rather than blocking every later alert behind it.
@@ -93,8 +102,12 @@ def resolve_alert(
     lag_bars: int = DEFAULT_LAG_BARS,
     cost: float = DEFAULT_COST,
     emitted_ms: int | None = None,
+    bracket: float | None = None,
 ) -> dict[str, Any] | None:
     """Score one alert against the candles that followed it.
+
+    With `bracket` (a trigger distance), the record also carries the result of
+    `bracket_trade` from the same entry bar.
 
     Returns None while the horizon has not elapsed in the data (try again next
     cycle), otherwise a record whose `status` is `ok`, `gap` (a missing or
@@ -154,7 +167,7 @@ def resolve_alert(
             gross = barrier if first_touch == direction else -barrier
         return gross - cost
 
-    return {
+    out = {
         "status": "ok",
         "move_hit": int(first_touch is not None),
         "first_touch": first_touch,
@@ -164,6 +177,71 @@ def resolve_alert(
         "momentum_net": _trade(bar_dir),
         "fade_net": _trade(-bar_dir),
     }
+    if bracket is not None:
+        side, gross = bracket_trade(candles, i0 + lag_bars, last_i, trigger=bracket, target=barrier, cost=0.0)
+        out["bracket_side"], out["bracket_gross"] = side, gross
+        out["bracket_net"] = None if gross is None else gross - BRACKET_COST
+    return out
+
+
+def bracket_trade(
+    candles: list[dict[str, Any]],
+    start: int,
+    end: int,
+    *,
+    trigger: float,
+    target: float,
+    cost: float,
+) -> tuple[int | None, float | None]:
+    """A breakout bracket for a warning that names no direction.
+
+    Fixed 2026-10-17, after the ignition channel was confirmed and before any
+    bracket outcome existed: at the reference price `ref` (close of bar
+    `start`, the ledger's entry bar) a buy-stop at `ref * (1 + trigger)` and a
+    sell-stop at `ref * (1 - trigger)`; whichever fills first cancels the
+    other. Take-profit `ref * (1 +- target)` — the move the warning is about —
+    stop-loss back at `ref`. Orders not filled by bar `end` are cancelled: no
+    trade, `(None, None)`. A filled trade still open at `end` exits on its close.
+
+    1m bars do not say what happened first inside a bar, so every ambiguity
+    is booked against the trade: both stops inside one bar is a loss; a later
+    bar touching the stop is a loss even if it also touched the target. The
+    bar that fills is the exception — it opens next to `ref`, so its low
+    nearly always dips below `ref` before the breakout; there only a close
+    back beyond `ref` counts as stopped.
+
+    Returns (side, net): side +1 long, -1 short, 0 both stops in one bar.
+    """
+    ref = float(candles[start].get("close", 0.0) or 0.0)
+    if ref <= 0:
+        return None, None
+    up_fill, dn_fill = ref * (1 + trigger), ref * (1 - trigger)
+    side = 0
+    fill = 0.0
+    for i in range(start + 1, end + 1):
+        c = candles[i]
+        high = float(c.get("high", 0.0) or 0.0)
+        low = float(c.get("low", 0.0) or 0.0)
+        close = float(c.get("close", 0.0) or 0.0)
+        if side == 0:
+            hit_up, hit_dn = high >= up_fill, 0 < low <= dn_fill
+            if hit_up and hit_dn:
+                return 0, ref / up_fill - 1.0 - cost
+            if not (hit_up or hit_dn):
+                continue
+            side, fill = (1, up_fill) if hit_up else (-1, dn_fill)
+            stopped = close <= ref if side > 0 else close >= ref
+        else:
+            stopped = low <= ref if side > 0 else high >= ref
+        tp = ref * (1 + side * target)
+        if stopped:
+            return side, side * (ref / fill - 1.0) - cost
+        if (side > 0 and high >= tp) or (side < 0 and 0 < low <= tp):
+            return side, side * (tp / fill - 1.0) - cost
+    if side == 0:
+        return None, None
+    exit_close = float(candles[end].get("close", 0.0) or 0.0)
+    return side, side * (exit_close / fill - 1.0) - cost
 
 
 def _read_from(path: Path, offset: int) -> list[tuple[int, dict[str, Any] | None]]:
@@ -228,6 +306,7 @@ def update_ledger(
     sources: dict[str, str] | None = None,
     ledger_file: str = LEDGER_FILE,
     state_key: str = STATE_KEY,
+    bracket: float | None = None,
 ) -> int:
     """Resolve every alert whose horizon has elapsed; append to the ledger.
 
@@ -285,7 +364,7 @@ def update_ledger(
             res = resolve_alert(
                 candles, index.timestamps(alert["symbol"]), alert["event_ts"],
                 horizon=alert["horizon"], barrier=alert["barrier"], lag_bars=lag_bars, cost=cost,
-                emitted_ms=alert["emitted_ms"],
+                emitted_ms=alert["emitted_ms"], bracket=bracket,
             )
             if res is None:
                 if now_ms - alert["event_ts"] < expire_hours * 3_600_000:

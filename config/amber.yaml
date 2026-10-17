@@ -174,7 +174,10 @@ ignition:
   train_days: 30       # history the daily model trains on (as validated)
   retrain_min: 1440    # once a day; a training pass reads ~1.3 GB of features
   budget: 0.01         # each coin's top 1% of calm bars alert, as validated
-  telegram: false      # keep false until the forward ledger reads `confirmed`
+  # Confirmed forward 2026-10-17 (lift 4.29, lower bound 2.14, 133 episodes).
+  # Needs AMBER_TG_TOKEN / AMBER_TG_CHAT in /etc/amber/alerts.env; without
+  # them each warning logs "telegram alert skipped" and nothing else changes.
+  telegram: true
 
 model:
   cv:

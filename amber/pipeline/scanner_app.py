@@ -245,7 +245,12 @@ def _scan_ignition(
             from amber.alerts.telegram import send_telegram_text
 
             for rec in notify:
-                send_telegram_text(alert_text(rec))
+                # Sending is synchronous, with retries. If Telegram is down or
+                # unreachable, one failure is enough per scan: trying every
+                # warning would hold the minute's scan for minutes.
+                if not send_telegram_text(alert_text(rec)):
+                    logger.warning("ignition: telegram send failed; the rest of this scan's warnings are not sent")
+                    break
         # Every scan, zeros included: silence would be indistinguishable from
         # a scanner that never reached this code.
         logger.info("ignition: %s calm coins scored, %s alerts, %s shown", len(records),
