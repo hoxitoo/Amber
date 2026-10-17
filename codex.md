@@ -1,5 +1,7 @@
 # CODEX Session Continuity Guide — Amber
 
+> Historical. The current rules, live results and plan are in `CLAUDE.md`.
+
 _Last updated: 2026-05-28_
 
 ## 1) Purpose of this file

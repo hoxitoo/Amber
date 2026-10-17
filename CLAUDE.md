@@ -497,6 +497,27 @@ episode count, and what it does and does not show.
   booking it forward. The Telegram text no longer shows bracket levels; it
   says the warning is not a trade signal.
 
+- **2026-10-17, shown-probability check built; docs brought up to date.**
+  The owner asked to show "уверенность в движении" (e.g. 30%) on warnings.
+  Answer given: the message already shows the calibrated P; a "30%" would be
+  invented (forward rate after warnings is ~6%), and a P is worth showing
+  only if it is honest forward. `summarize_calibration` (in the ignition
+  report): mean shown P of the warnings a person sees vs the
+  episode-clustered exact two-sided 95% interval of what followed (wick
+  touches, which can only run at or above the mid-based label), verdicts
+  `consistent` / `overstated` / `understated`, ≥30 episodes and ≥7 days;
+  plus a descriptive table by P band over all calm bars. Fixtures: honest P
+  -> consistent 9+/10 seeds; 12% shown vs 4% real -> overstated; 2% vs 10%
+  -> understated. Not yet run on the box. README / context.md / roadmap
+  updated to the October state (they still described July-September);
+  codex.md and plan.md marked historical. Also reviewed for the owner: the
+  Telegram channel t.me/ftcrypta (level breakouts after 2-7 touches on
+  15m/1H/4H, no stop/target, results shown to the extreme in hindsight, Bybit
+  referral in signal posts; on two charts a "Шорт" position marker sits
+  exactly at an advertised "long above" level — inferred, not proven).
+  Owner approved checking that channel's signals on candles, **last** in
+  the queue (section 11 I).
+
 ## 11. The plan to a profit test
 
 Proposed 2026-09-29. Why we have been circling: the only out-of-sample data is
@@ -564,3 +585,16 @@ thing that can say whether acting on alerts makes money.
   from sub-minute flow / order book), the 4H/1D pullback mode (historical
   backtest, fees small next to its targets), or keeping ignition as an
   information-only channel.
+- **H. Pullback mode, 4H/1D** (proposed 2026-10-16, next in the queue): a
+  read-only historical backtest on BTC/ETH (Bybit public klines, years):
+  uptrend (EMA200) pullbacks — (a) a 3-5% drop within hours, (b) a retest of
+  former resistance — x entries (limit at the zone, confirmation close,
+  false-break reclaim), mirrored for downtrends; taker/maker fees, slippage
+  and funding; control = random entries in the same trend state with the same
+  stop/target; null fixture at the real arm count first. Result the same day
+  the owner runs it; forward confirmation would take months (few trades).
+- **I. External signal channel check** (approved 2026-10-17, last): collect
+  t.me/ftcrypta's "long above X / short below Y" signals from the public web
+  preview, replay on Bybit candles with exits fixed in advance and fees,
+  against random level breakouts on the same coins and days. Count id gaps
+  (deleted posts would bias it in his favour).

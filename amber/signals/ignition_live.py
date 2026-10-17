@@ -485,6 +485,70 @@ def summarize_ignition(logs_root: Path, *, since_ms: int | None = None) -> dict[
     else:
         out["verdict"] = "not_confirmed"
     out["bracket"] = summarize_bracket(rows, _read_backfill(Path(logs_root)), horizon)
+    out["calibration"] = summarize_calibration(rows, horizon)
+    return out
+
+
+# Probability bands for the forward reliability table.
+PROB_BANDS = (0.0, 0.01, 0.02, 0.04, 0.08)
+
+
+def summarize_calibration(rows: list[dict[str, Any]], horizon: int) -> dict[str, Any]:
+    """When a warning says "P = x%", how often did a 1% move follow, forward?
+
+    The shown probability is Platt-calibrated on training labels that follow
+    the bid/ask mid; the ledger books a move when a candle's wick reaches 1%,
+    which happens at least as often. So a forward rate BELOW the shown
+    probability means the message over-promises, whatever the label detail.
+
+    One comparison on the warnings a person is shown (mean shown P against
+    the episode-clustered exact two-sided 95% interval of what followed),
+    with the same day and episode floors as the money verdict. The bands over
+    all calm bars are descriptive: they show whether a higher P ranks higher.
+    """
+    from amber.backtest.label_sweep import _episodes, clustered_high, clustered_low, family_z
+    from amber.monitoring.ledger import DAY_MS, MIN_DAYS, MIN_EPISODES
+
+    def band_of(p: float) -> int:
+        k = 0
+        for i, lo in enumerate(PROB_BANDS):
+            if p >= lo:
+                k = i
+        return k
+
+    scored = [r for r in rows if r.get("prob") is not None]
+    bands: list[dict[str, Any]] = []
+    for i, lo in enumerate(PROB_BANDS):
+        hi = PROB_BANDS[i + 1] if i + 1 < len(PROB_BANDS) else None
+        mine = [r for r in scored if band_of(float(r["prob"])) == i]
+        bands.append({
+            "lo": lo, "hi": hi, "bars": len(mine),
+            "mean_prob": (sum(float(r["prob"]) for r in mine) / len(mine)) if mine else None,
+            "hit_rate": (sum(int(r.get("move_hit", 0)) for r in mine) / len(mine)) if mine else None,
+            "episodes": _episodes([int(r["event_ts"]) for r in mine], horizon) if mine else 0,
+        })
+
+    shown = [r for r in scored if int(r.get("notify", 0))]
+    out: dict[str, Any] = {"bands": bands, "shown": len(shown), "min_episodes": MIN_EPISODES, "min_days": MIN_DAYS}
+    if not shown:
+        out["verdict"] = "no_warnings_yet"
+        return out
+    mean_p = sum(float(r["prob"]) for r in shown) / len(shown)
+    rate = sum(int(r.get("move_hit", 0)) for r in shown) / len(shown)
+    eps = _episodes([int(r["event_ts"]) for r in shown], horizon)
+    days = len({int(r["event_ts"]) // DAY_MS for r in shown})
+    z = family_z(2)  # two-sided 95%: over- or under-promising
+    low, high = clustered_low(rate, eps, z), clustered_high(rate, eps, z)
+    if eps < MIN_EPISODES or days < MIN_DAYS:
+        verdict = "underpowered"
+    elif high < mean_p:
+        verdict = "overstated"
+    elif low > mean_p:
+        verdict = "understated"
+    else:
+        verdict = "consistent"
+    out.update({"mean_prob": mean_p, "hit_rate": rate, "low": low, "high": high,
+                "episodes": eps, "days": days, "verdict": verdict})
     return out
 
 
@@ -604,7 +668,36 @@ def format_ignition_summary(s: dict[str, Any]) -> str:
     b = s.get("bracket")
     if b:
         lines += ["", *format_bracket(b)]
+    c = s.get("calibration")
+    if c:
+        lines += ["", *format_calibration(c)]
     return "\n".join(lines)
+
+
+def format_calibration(c: dict[str, Any]) -> list[str]:
+    def pct(v: Any) -> str:
+        return "-" if v is None else f"{v * 100:.1f}%"
+
+    lines = ["Честность показанной вероятности (ход ≥1% за 30 мин, по фитилям свечей):"]
+    for b in c["bands"]:
+        rng = f"{b['lo'] * 100:.0f}–{b['hi'] * 100:.0f}%" if b["hi"] is not None else f"≥{b['lo'] * 100:.0f}%"
+        lines.append(f"  P {rng:>6}: баров {b['bars']:>6} · средняя P {pct(b['mean_prob']):>6} · "
+                     f"ход был {pct(b['hit_rate']):>6} · эпизодов {b['episodes']}")
+    if c.get("mean_prob") is not None:
+        lines.append(
+            f"показанные предупреждения: {c['shown']} · обещано в среднем {pct(c['mean_prob'])} · "
+            f"случилось {pct(c['hit_rate'])} (95%: {pct(c['low'])}–{pct(c['high'])}, "
+            f"{c['episodes']} эпизодов, {c['days']} дн.)"
+        )
+    verdicts = {
+        "no_warnings_yet": "показанных предупреждений ещё не было",
+        "underpowered": f"мало данных: нужно ≥{c['min_episodes']} эпизодов за ≥{c['min_days']} дней",
+        "consistent": "показанная вероятность честная: случилось столько, сколько обещано",
+        "overstated": "показанная вероятность ЗАВЫШЕНА: ход случается реже, чем пишет сообщение",
+        "understated": "показанная вероятность ЗАНИЖЕНА: ход случается чаще, чем пишет сообщение",
+    }
+    lines.append(f"ИТОГ вероятности: {c['verdict']} — {verdicts.get(c['verdict'], '')}")
+    return lines
 
 
 def format_bracket(b: dict[str, Any]) -> list[str]:

@@ -278,6 +278,20 @@ def clustered_low(rate: float, episodes: int, z: float = 1.96) -> float:
     return float(beta.ppf(alpha, k, n - k + 1.0))
 
 
+def clustered_high(rate: float, episodes: int, z: float = 1.96) -> float:
+    """Exact (Clopper-Pearson) upper bound, the mirror of `clustered_low`."""
+    from scipy.stats import beta, norm
+
+    p = min(1.0, max(0.0, float(rate)))
+    n = float(episodes)
+    if n <= 0:
+        return 1.0
+    k = p * n
+    if k >= n:
+        return 1.0
+    return float(beta.ppf(1.0 - float(norm.sf(z)), k + 1.0, n - k))
+
+
 def _episodes(timestamps: list[int], horizon: int, step_ms: int = 60_000) -> int:
     """Independent market episodes among a set of alerts.
 

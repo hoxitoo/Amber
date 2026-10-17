@@ -1,9 +1,10 @@
 # Project Amber — Roadmap
 
-_Last updated: 2026-09-29_
+_Last updated: 2026-10-17_
 
-Amber is a local-first ML scanner for Bybit futures that predicts event
-probabilities (pump/dump) and emits alerts. Not an auto-trader.
+Amber is a local-first ML scanner for Bybit futures that predicts the
+probability of a move (`move`, since 2026-09-06) and warns when a calm coin is
+likely to move (ignition, since 2026-10-09). Not an auto-trader.
 
 Legend: `[x]` done · `[~]` partial · `[ ]` planned.
 
@@ -53,6 +54,15 @@ Legend: `[x]` done · `[~]` partial · `[ ]` planned.
 ---
 
 ## Current state (honest)
+
+**2026-10-17.** Ignition warnings are confirmed forward (lift 4.29, lower
+bound 2.14, 133 episodes over 9 days) and go to Telegram; a pre-registered
+breakout bracket on them does not pay (-16.1 bps a trade after costs, lower
+bound -22.9; gross ≈ 0). The volatility alerts are matched by `range_atr_14`
+and neither momentum nor fade beats the fee. Direction is not predicted.
+Details and every number: `CLAUDE.md` sections 10–11. The text below is the
+September state, kept for its reasoning.
+
 
 Built and tested (285 tests), running 24/7 on real Bybit mainnet data over 27
 symbols. Sprint 1's open question — *does the model have real predictive edge?*
@@ -127,7 +137,9 @@ See `docs/audit_review_board_2026-07.md` for the full institutional audit.
 Requested 2026-07-26. Make each signal self-explanatory and self-scoring: show
 how confident the model is, and later whether it was right.
 
-- [ ] **S4.1 — Per-signal confidence in the UI.** Surface the model's confidence
+- [~] **S4.1 — Per-signal confidence in the UI.** *2026-10-17:* ignition warnings show their
+      calibrated P; the ignition report now checks it forward (`ИТОГ вероятности`).
+      Original item: Surface the model's confidence
       for every signal in the "Модель" tab signal list, e.g. `pump — уверенность
       70%`. The number is the head's **calibrated** probability
       (`prob_up_calibrated` / `prob_down_calibrated`), which the model already

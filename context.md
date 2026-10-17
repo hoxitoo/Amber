@@ -1,11 +1,17 @@
-# Project Amber — Context Snapshot (July 20, 2026)
+# Project Amber — Context Snapshot (July 20, 2026; scope updated October 17)
+
+> Sections 2–5 are the July snapshot. What has been measured since, and the
+> current plan, are in `CLAUDE.md` sections 10–11.
 
 ## 1. Product scope
 Amber is a real-time ML scanner for Bybit futures. It provides:
-- event probabilities (`P(pump)`, `P(dump)`),
-- filtering/scoring,
-- alerting and monitoring,
-- but **no trade execution**.
+- `P(move)`: |price| reaches 1% within 15 bars, either way (since 2026-09-06;
+  the pump/dump heads are kept only for a direction revisit, roadmap D10),
+- ignition warnings: a calm coin, P of a 1% move within 30 min (since
+  2026-10-09; confirmed forward 2026-10-17, sent to Telegram),
+- forward ledgers that score every alert and warning after its horizon,
+- filtering/scoring, alerting and monitoring,
+- but **no trade execution**, and no direction call.
 
 ## 2. What is implemented now
 - Contracts/safety: config loader, path guards, manifests, state store, schemas.

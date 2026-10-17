@@ -14,12 +14,18 @@ that price is about to move** and emits alerts.
 > direction heads keep training for a deferred revisit (roadmap D10); see
 > `docs/target_review_2026-09.md`.
 
-## Current state (July 20, 2026)
-- End-to-end pipeline works on real Bybit v5 contracts: WS collector (kline + tickers) → incremental idempotent normalize → features → dataset → LightGBM train/calibrate/eval → scanner/alerts.
-- ML is leakage-safe: time-ordered dataset, walk-forward CV with purge gaps, dedicated calibration holdout and test segments (`in_sample` flag in eval), model-driven backtest on the test split as promotion gate.
-- Monitoring is honest: health checks the paths the pipeline actually writes, rolling AUC uses confirmed real outcomes only, PSI compares live features against the train reference stored in the model artifact.
-- Alerts: console, Telegram (Bot API) and Discord (webhook) transports; credentials from env vars only. Cooldown/concurrency state persists across runs.
-- Deployment profile: systemd units + docker-compose in `deploy/`.
+## Current state (October 17, 2026)
+The full, dated record of what has been measured live is `CLAUDE.md` sections
+10–11; this is the short version.
+- **Volatility alerts** (the `move` model, 27 symbols, 1m bars): they fire when
+  a move is already under way, and are matched by a one-line `range_atr_14`
+  rule. In the forward ledger neither momentum nor fade beats the fee.
+- **Ignition warnings** ("calm now; a 1% move within 30 min is likely"):
+  confirmed forward on 9 days — a 1% move followed 5.9% of warnings against
+  1.4% for calm bars of the same coins (lift 4.29, lower bound 2.14). Sent to
+  Telegram since 2026-10-17. They are **not a trade signal**: a pre-registered
+  breakout bracket on them lost 16 bps a trade after costs (gross ≈ 0).
+- Direction is not predicted, anywhere.
 
 ## Quickstart
 ```bash
@@ -140,16 +146,31 @@ A standalone executable can be built with PyInstaller — see `packaging/README.
 (the launcher above is the recommended, reliable path).
 
 ## Alerts
-Set credentials via environment (never in config/code):
-- Telegram: `AMBER_TG_TOKEN`, `AMBER_TG_CHAT`, then add `telegram` to `alerts.channels` in `config/amber.yaml`.
+Set credentials via environment (never in config/code). On the VPS they live
+in `/etc/amber/alerts.env` (root, mode 600), read by the scanner unit:
+- Telegram: `AMBER_TG_TOKEN`, `AMBER_TG_CHAT`.
+  - Ignition warnings go to Telegram when `ignition.telegram: true` (on).
+  - Adding `telegram` to `alerts.channels` would also send every volatility
+    alert — hundreds a day, of a signal that does not pay. Left off.
 - Discord: `AMBER_DISCORD_WEBHOOK` + `discord` channel.
+
+## Ignition warnings
+```bash
+python scripts/run_ignition_report.py         # forward verdicts: warning, bracket, shown probability
+python scripts/backfill_ignition_bracket.py   # one-off: bracket for warnings resolved before 2026-10-17
+```
+The report gives three verdicts, each fixed before its data existed: do
+warnings precede moves (`confirmed`), does the breakout bracket pay after
+costs (`not_shown_profitable` so far), and is the probability the message
+shows honest (`consistent` / `overstated` / `understated`).
 
 ## Key docs
 - `context.md` — product/technical context and invariants.
 - `roadmap.md` — stage progress (`[x] / [~] / [ ]`).
 - `plan.md` — tactical near-term execution notes.
 - `deploy/README.md` — VPS/systemd/docker deployment.
-- `codex.md` — session continuity guide.
+- `CLAUDE.md` — rules and the live results log; the current source of truth.
+- `codex.md` — older session continuity guide (superseded by `CLAUDE.md`).
 
 ## Principles
 - Event prediction, not directional guessing.

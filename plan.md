@@ -1,5 +1,7 @@
 # Project Amber — Implementation Plan (Updated)
 
+> Historical. The current rules, live results and plan are in `CLAUDE.md`.
+
 ## A. What changed from prior plan
 1. Scope moved from generic ML scanner to **Bybit futures-specific LightGBM pipeline**.
 2. Time architecture explicitly became **Fast/Main/Regime**.
