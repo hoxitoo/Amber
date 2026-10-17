@@ -432,6 +432,25 @@ episode count, and what it does and does not show.
   Because `days` counts distinct UTC days, the day floor is met on 10-15,
   not 10-16 as written above; the rule stands as fixed.
 
+- **2026-10-17, ignition forward verdict `confirmed`** (9 distinct UTC days,
+  ~7.3 days live): 40,302 resolved calm bars, 106 independent moves from
+  calm; 574 threshold crossings (277 would have been shown, ~38/day,
+  inferred from the span), 133 alert episodes. Move ≥1% within 30 min after
+  an alert **5.92%** vs **1.38%** for calm bars of the same coins: lift 4.29,
+  exact one-sided lower bound **2.14**. Pre-registered single comparison, on
+  data the check never saw, so the across-run multiplicity caveat of 10-09
+  does not apply to it. Precision fell from 8.0% at day 4 (normal: early
+  reads run high), the bound rose with more data. Ledger pace measured:
+  `ignition_calm.jsonl` 40,833 vs `ignition_ledger.jsonl` 40,626 lines, gap
+  207 ≈ the last 30-min horizon still open — it keeps up. What it does NOT
+  show: profit. ~94% of shown warnings are followed by no 1% move, and
+  direction is not predicted; whether any trade on these warnings beats the
+  fee is unmeasured. Precision is reported over all threshold crossings, not
+  over the shown subset. One month, one regime. Telegram still off; the
+  owner decides (section 11 F). The 2026-10-16 conversation also raised a
+  second mode (4H/1D pullback-to-support on BTC/ETH); proposed as a
+  read-only historical backtest first, not started.
+
 ## 11. The plan to a profit test
 
 Proposed 2026-09-29. Why we have been circling: the only out-of-sample data is
