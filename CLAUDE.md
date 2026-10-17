@@ -457,16 +457,24 @@ episode count, and what it does and does not show.
   warnings go to Telegram (`alerts.channels` still console only), ~38/day
   (inferred). One failed send ends that scan's sending, so a Telegram outage
   cannot hold the scan for minutes. Money test, fixed before any outcome:
-  breakout **bracket** on every shown warning — stops +-0.3% from the entry
-  bar's close, first fill cancels the other, target +-1% from it, stop back at
-  it, 30-bar window, unfilled = no trade; costs **15 bps** round trip (both
-  sides taker, Bybit base 0.055% a side, + 4 bps slippage), gross stored too.
-  Verdict `summarize_bracket`: episode-clustered mean net per trade, one
-  comparison, one-sided 95% lower bound > 0, ≥30 episodes and ≥7 days. Null
-  fixtures: the bar conventions match the sub-minute path to 0.00 bps over
-  4,000 random-walk brackets; booking stops at their exact level was worth
-  +2.3 bps there (what the slippage allowance covers); a random walk at the
-  booked cost reads `not_shown_profitable`. Warnings resolved before the
+  breakout **bracket** on every shown warning — stop orders +-0.3% from the
+  entry bar's close, the first fill is the trade and the other order's level
+  its stop-loss, target +-1% from the close, 30-bar window, unfilled = no
+  trade; costs **15 bps** round trip (both sides taker, Bybit base 0.055% a
+  side, + 4 bps slippage), gross stored too. Verdict `summarize_bracket`:
+  episode-clustered mean net per trade, one comparison, one-sided 95% lower
+  bound > 0, ≥30 episodes and ≥7 days. Same-day review caught my first
+  version (stop back at the close) overstating results: on 1m bars a dip
+  before the breakout cannot be told from a return after it, worth 0.00 bps
+  calm but +0.8 / +3.2 / +6.4 bps a trade at 0.3 / 0.5 / 0.8%/min, i.e.
+  exactly when brackets fill. Moved the stop to the other order before any
+  outcome was computed (a00a0af); now no simulated trade scores better on
+  bars than on its sub-minute path (tested at 0.12% and 0.5%/min), and a
+  random walk at the booked cost reads `not_shown_profitable`. Booking stops
+  at their exact level instead of where the path crossed is ~2 bps (what the
+  slippage allowance covers). Telegram: values in alerts.env are stripped of
+  CR/quotes (Windows-made file), a 4xx is not retried, the token is redacted
+  from transport-error logs. Warnings resolved before the
   bracket existed are scored once by `scripts/backfill_ignition_bracket.py`
   (same entry bar, checked; separate file; ledger never rewritten). Measured
   here at 27 symbols x 100k-candle files, 60k ledger rows: peak 224 MB, 6 s.
