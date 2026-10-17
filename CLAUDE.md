@@ -615,8 +615,15 @@ episode count, and what it does and does not show.
   raw** (-> ~18 MB/day gzipped, ~0.8 GB at 45 days, inferred from the
   synthetic x3.5), stale 0, crossed 0, late trades 0. Weekday message rates
   are likely higher (inferred); the 50% CPU cap leaves ~7x headroom over
-  today. Awaiting a 1-hour `run_book_report.py`. Direction check due
-  ~2026-11-07.
+  today. **1-hour report (box, 14:41-15:41 UTC): `ok`** — 719 of ~719 rows for
+  all 27 symbols, 100% with a book, median book age 106-798 ms, 3 MB on disk.
+  Measured limitation for D2: the 200-level book reaches only a few bps on
+  the most liquid coins (median nearer side: BTC 4, ETH 9, XAU 12, ZEC 21,
+  HYPE 26, BNB 30 bps; most alts 150-1,500 bps), so for those coins only the
+  5-10 bps bands are complete — the wider bands equal all visible depth. The
+  D2 check must use bands inside each coin's coverage. The report's "сбор
+  идёт с" line fired on every full window (rows sit on a 5 s grid); fixed.
+  Direction check due ~2026-11-07.
 
 ## 11. The plan to a profit test
 

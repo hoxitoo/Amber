@@ -66,7 +66,9 @@ def main() -> int:
     bad = []
     by_symbol = {s: read_rows(root, s, since) for s in cfg["exchange"]["bybit"]["symbols"]}
     first = min((r["ts"] for rows in by_symbol.values() for r in rows), default=None)
-    if first is not None and first > since:
+    # Rows sit on a 5 s grid, so the first one in a full window is always a few
+    # seconds after `since`; only a start later than that is a short collection.
+    if first is not None and first > since + 2 * interval * 1000:
         # Collected for less than the asked window: judge against what it could have written.
         expected = int((time.time() * 1000 - first) / 1000 / interval)
         print(f"(сбор идёт с {datetime.fromtimestamp(first / 1000, tz=timezone.utc):%m-%d %H:%M} UTC, "
