@@ -534,6 +534,16 @@ episode count, and what it does and does not show.
   60 (`time.sleep(interval)` after a ~43 s scan), so ~40% of minutes are
   never scored — no bias in the verdicts (warnings and their base come from
   the same scanned bars), fewer warnings; backlog.
+  **Resolved the same day — not a fault, a weekend effect** (owner's
+  diagnostic, alerts as a share of calm bars per UTC day): Fri 10-09 0.21%
+  (partial day), Sat 0.04%, Sun 0.15%, Mon 1.91%, Tue 4.39%, Wed 5.63%, Thu
+  5.15%, Fri 0.99%, Sat 10-17 0.02%; overall 1.39% against the 1% budget.
+  Weekends have 2-3x the calm bars and almost no hour-scale turbulence, which
+  the model keys on, so Telegram goes nearly silent on Saturdays and Sundays.
+  The 10-16 model (`b0dc3c95`) does alert (01:13 on 10-17). Daily models
+  retrain ~18:00 UTC. Watch: `coins_with_threshold` fell 24 -> 23 -> 19 of
+  27 over 10-14..10-16 (a coin needs >= 100 calm bars in the latest 15% of
+  the window); coins without one never alert.
 
 - **2026-10-17, pullback study (section 11 H) — no variant pays.** Built
   `amber/backtest/pullback.py`, `history.py`, `scripts/run_pullback_check.py`
