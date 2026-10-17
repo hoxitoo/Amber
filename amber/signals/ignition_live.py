@@ -398,31 +398,18 @@ def alert_text(rec: dict[str, Any]) -> str:
     return (
         f"{rec['symbol']}: сейчас спокойно. Вероятность хода ≥{rec['target_up_pct'] * 100:.0f}% в любую сторону "
         f"за {rec['horizon_min']} мин — {rec['prob'] * 100:.1f}%{base_txt}. Направление не прогнозируется. "
-        f"Факторы: {factors}.{_bracket_text(rec)}"
+        f"Факторы: {factors}.\n{NOT_A_TRADE_NOTE}"
     )
 
 
-def _bracket_text(rec: dict[str, Any]) -> str:
-    """The levels of the bracket the ledger books, so a person can place it.
-
-    Records written before 2026-10-17 carry no price; their text has no levels.
-    """
-    price = float(rec.get("price", 0.0) or 0.0)
-    if price <= 0:
-        return ""
-
-    def fmt(v: float) -> str:
-        return f"{v:.{max(2, 5 - int(math.floor(math.log10(v))))}f}" if v > 0 else "-"
-
-    t, b = BRACKET_TRIGGER, float(rec.get("target_up_pct", 0.01))
-    return (
-        f"\nЕсли торговать брекет (так его считает журнал): цена {fmt(price)}; "
-        f"покупка-стоп {fmt(price * (1 + t))}, продажа-стоп {fmt(price * (1 - t))}; "
-        f"сработал один — второй отменить и поставить стоп-лосс на его уровень; "
-        f"цель {fmt(price * (1 + b))} (лонг) / {fmt(price * (1 - b))} (шорт); "
-        f"не сработал за {rec['horizon_min']} мин — отменить оба. "
-        "Прибыльность брекета ещё проверяется."
-    )
+# The bracket was this message's trading levels until its pre-registered test
+# came back on 2026-10-17: 198 fills over 8 days, -16.1 bps a trade after
+# costs, lower bound -22.9, gross about -1 bps. Showing levels for a rule
+# measured to lose would invite the loss. The ledger keeps booking it forward.
+NOT_A_TRADE_NOTE = (
+    "Это предупреждение о вероятности хода, не сигнал на сделку: механический брекет по таким "
+    "предупреждениям в проверке не окупил комиссии."
+)
 
 
 # Forward confirmation (CLAUDE.md section 11). Fixed 2026-10-09, before any

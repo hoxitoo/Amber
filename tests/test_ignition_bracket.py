@@ -278,17 +278,15 @@ class TestLedgerAndBackfill(unittest.TestCase):
 
 
 class TestTelegram(unittest.TestCase):
-    def test_text_gives_the_bracket_levels(self):
+    def test_text_offers_no_trading_levels_after_the_bracket_failed(self):
+        """The bracket's forward test read not_shown_profitable (2026-10-17);
+        the message must not hand out the levels of a rule measured to lose."""
         text = IL.alert_text({"symbol": "ETHUSDT", "prob": 0.09, "coin_base": 0.012, "alert": 1,
                               "horizon_min": 30, "target_up_pct": 0.01, "price": 2500.0, "factors": []})
-        for part in ("2507.50", "2492.50", "2525.00", "2475.00", "Направление не прогнозируется",
-                     "ещё проверяется"):
+        for level in ("2507.5", "2492.5", "2525", "2475"):
+            self.assertNotIn(level, text)
+        for part in ("Направление не прогнозируется", "не сигнал на сделку"):
             self.assertIn(part, text)
-
-    def test_old_records_without_price_have_no_levels(self):
-        text = IL.alert_text({"symbol": "ETHUSDT", "prob": 0.09, "coin_base": 0.012, "alert": 1,
-                              "horizon_min": 30, "target_up_pct": 0.01})
-        self.assertNotIn("брекет", text)
 
     def test_one_failed_send_stops_the_rest_of_the_scan(self):
         from amber.pipeline import scanner_app

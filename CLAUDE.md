@@ -481,6 +481,22 @@ episode count, and what it does and does not show.
   Telegram text now gives the bracket levels from the bar's mid price (the
   ledger uses the next bar's close; a few bps apart).
 
+- **2026-10-17, bracket verdict `not_shown_profitable`** (deployed on the box
+  same day: pull fccb5a6, Telegram test send `True`, scanner + pipeline
+  restarted; backfill over the 10-09..10-17 warnings, rule fixed before any
+  outcome): 277 shown warnings scored, 198 filled (71%), win rate 24%, **102
+  episodes over 8 days**. Net per trade **-16.1 bps**, lower bound **-22.9**;
+  total -32% at one position per trade. Gross = net + 15 bps (constant cost)
+  = **-1.1 bps**, inside about +-4 bps of zero (SE inferred from the bound):
+  even at zero fees the bracket would not be shown profitable. Same picture
+  as the main ledger's momentum/fade: a fill at +-0.3% is a coin flip on
+  which way it goes next, and the fee decides. Reading: the warning is real
+  (more 1% moves than calm bars of the same coins) but only ~6% of warnings
+  are followed by one, and a symmetric stop rule cannot pick the side. Per
+  section 11 G the bracket is not re-tuned on these data; the ledger keeps
+  booking it forward. The Telegram text no longer shows bracket levels; it
+  says the warning is not a trade signal.
+
 ## 11. The plan to a profit test
 
 Proposed 2026-09-29. Why we have been circling: the only out-of-sample data is
@@ -542,4 +558,9 @@ thing that can say whether acting on alerts makes money.
   `profitable` -> the owner may trade it by hand at small size; Amber still
   places no orders. `not_shown_profitable` -> the warning is real but this
   way of trading it does not beat 15 bps; say so, do not re-tune the bracket on
-  the same data (any new rule is a new forward test).
+  the same data (any new rule is a new forward test). **Result 2026-10-17:
+  `not_shown_profitable`** (-16.1 bps a trade, lower bound -22.9, 102
+  episodes, gross ≈ -1 bps). Open: the owner's choice between D2 (direction
+  from sub-minute flow / order book), the 4H/1D pullback mode (historical
+  backtest, fees small next to its targets), or keeping ignition as an
+  information-only channel.
