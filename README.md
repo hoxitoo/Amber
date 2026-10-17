@@ -163,6 +163,18 @@ Twelve pre-registered variants of "buy the pullback to support in a trend" (and
 the mirrored short), with fees, slippage and funding, against a random entry in
 the same trend. 2026-10-17: none pays after costs (`CLAUDE.md` section 10).
 
+## Order book collector (roadmap D2)
+```bash
+python scripts/run_book_collector.py      # service: amber-book-collector
+python scripts/run_book_report.py --hours 1
+```
+Its own socket and process: the order book (200 levels) and taker trades for
+every symbol, stored every 5 s as one compact row (mid, spread, top-of-book
+size, resting notional within 5-100 bps per side, buy/sell flow) in
+`data/raw/book/<SYMBOL>/<day>.csv`; finished days gzipped, 45 days kept.
+Collected so the direction question can be asked of data the 1m bars do not
+have. Off with `book.enabled: false`.
+
 ## Ignition warnings
 ```bash
 python scripts/run_ignition_report.py         # forward verdicts: warning, bracket, shown probability

@@ -581,6 +581,32 @@ episode count, and what it does and does not show.
   history covers it, but it changes the confirmed model (new forward test,
   memory to measure first).
 
+- **2026-10-17, D2 collection built** (pushed, deploy pending): the owner
+  chose to collect order book + sub-minute flow during a ~3-week wait.
+  `amber/exchange/orderbook.py`, `amber/pipeline/book_app.py`,
+  `scripts/run_book_collector.py` (service `amber-book-collector`, own
+  socket/process/lock `book_collector`, dashboard button), `scripts/
+  run_book_report.py`. Subscribes `orderbook.200` + `publicTrade` for the 27
+  symbols; every 5 s one CSV row per symbol: mid, spread, L1 size, resting
+  notional within 5/10/25/50/100 bps each side, depth reach, buy/sell flow
+  (bucketed by trade time), book age. Rows go to `data/raw/book/SYM/day.csv`;
+  finished days gzipped (appending, never overwriting), >45 days deleted,
+  nothing written under 2 GB free; if no message arrives for 10 s the book
+  fields are left empty (socket down). systemd caps: CPUQuota 50%,
+  MemoryMax 400M, Nice 10, Restart on-failure (`book.enabled: false` exits
+  0). Measured here against a local fake Bybit (real Bybit is geo-blocked
+  from this container, so real message rates are NOT measured): ~405 msg/s
+  (inferred real load: orderbook.200 every 100 ms + trades) -> 2.9% of one
+  core, RSS 27 MB; 10x load (5,400 msg/s) -> 29%. Rows ~185 B -> ~85 MB/day
+  raw, gzip x3.5 on synthetic rows -> ~25 MB/day; 45 days ≈ 1.2 GB (inferred
+  upper). The service logs its real msg/s, CPU, RSS and MB/day every 10 min.
+  Review before push found and fixed: rows from a dropped socket kept
+  writing the stale book; a clock step back could duplicate an interval;
+  trades of a skipped interval vanished silently; a day re-gzipped could
+  overwrite its archive. Each has a test that fails without the fix; one
+  benchmark of mine was wrong first (27x the intended rate, read 65% CPU) —
+  caught by profiling before any number reached the owner.
+
 ## 11. The plan to a profit test
 
 Proposed 2026-09-29. Why we have been circling: the only out-of-sample data is
@@ -663,6 +689,11 @@ thing that can say whether acting on alerts makes money.
   preview, replay on Bybit candles with exits fixed in advance and fees,
   against random level breakouts on the same coins and days. Count id gaps
   (deleted posts would bias it in his favour).
+- **K. D2 data, collecting** (2026-10-17): order book + sub-minute flow
+  (above). After ~3 weeks: a direction check built like the ignition check
+  (calm bars / warnings, features from the book rows, within-coin ranks,
+  exact family-wise bounds, null fixtures first) — the only route to
+  direction left on public data.
 - **J. Pump fade — backlog** (owner's idea 2026-10-17, parked by the owner):
   after an extreme pump (+30/50/100% in 24 h) short from the current level,
   expecting the dump; the first idea that supplies a direction. History test

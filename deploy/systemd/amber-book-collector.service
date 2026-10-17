@@ -1,0 +1,22 @@
+[Unit]
+Description=Amber order book + sub-minute flow collector (roadmap D2)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=amber
+WorkingDirectory=/opt/amber
+ExecStart=/opt/amber/.venv/bin/python scripts/run_book_collector.py
+# on-failure: `book.enabled: false` exits 0 and stays stopped.
+Restart=on-failure
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+# Hard limits so this service can never take the box down: the kernel throttles
+# it at half a core and kills only it above 400 MB; the others keep priority.
+CPUQuota=50%
+MemoryMax=400M
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

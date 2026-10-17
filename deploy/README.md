@@ -14,6 +14,7 @@ stream may fail to connect there.
 | Unit | Role |
 |---|---|
 | `amber-ws-collector.service` | live WS ingestion (kline + tickers + publicTrade) into `data/raw/ws_raw` |
+| `amber-book-collector.service` | order book (200 levels) + sub-minute taker flow, 5 s rows into `data/raw/book` (roadmap D2); capped at 50% CPU / 400 MB |
 | `amber-pipeline.service` | loop: normalize + features every ~60s, rebuild dataset + retrain every `pipeline.retrain_min` |
 | `amber-scanner.service` | scoring loop, filters, alerts (`--loop`) |
 | `amber-dashboard.service` | optional Streamlit UI on `127.0.0.1:8501` (view over an SSH tunnel) |

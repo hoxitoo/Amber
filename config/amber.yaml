@@ -179,6 +179,17 @@ ignition:
   # them each warning logs "telegram alert skipped" and nothing else changes.
   telegram: true
 
+# Order book + sub-minute taker flow (roadmap D2; amber/pipeline/book_app.py),
+# collected by its own service, amber-book-collector. Rows every interval_sec
+# per symbol into data/raw/book/; finished days gzipped; older than
+# retention_days deleted; nothing written under 2 GB free disk.
+book:
+  enabled: true
+  depth: 200          # orderbook.200: Bybit pushes it every 100 ms (orderbook.50 every 20 ms)
+  interval_sec: 5
+  trades: true        # its own publicTrade subscription, bucketed by trade time
+  retention_days: 45
+
 model:
   cv:
     n_folds: 3

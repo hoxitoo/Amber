@@ -227,6 +227,8 @@ SERVICES: dict[str, dict[str, Any]] = {
                  "lock": "pipeline_loop"},
     "scanner": {"label": "Сканер (сигналы, loop)", "argv": ["scripts/run_scanner.py", "--loop"],
                 "lock": "scanner"},
+    "book_collector": {"label": "Стакан + поток сделок (D2)", "argv": ["scripts/run_book_collector.py"],
+                       "lock": "book_collector"},
 }
 
 PIPELINE_STEPS: list[dict[str, Any]] = [
