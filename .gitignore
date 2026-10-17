@@ -60,6 +60,8 @@ artifacts/
 # Secrets
 .env
 .env.*
+# alerts.env (Telegram token) and any other *.env, wherever it is saved
+*.env
 secrets/
 *.pem
 *.key
