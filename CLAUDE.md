@@ -606,6 +606,10 @@ episode count, and what it does and does not show.
   overwrite its archive. Each has a test that fails without the fix; one
   benchmark of mine was wrong first (27x the intended rate, read 65% CPU) —
   caught by profiling before any number reached the owner.
+  **Deployed on the box 2026-10-17 14:28 UTC**: 27 symbols, 54 topics,
+  `WS subscribe ok` for orderbook and publicTrade. Awaiting the first
+  `book:` stats line (real msg/s, CPU, RSS, MB/day) and a 1-hour
+  `run_book_report.py`. Direction check due ~2026-11-07.
 
 ## 11. The plan to a profit test
 
