@@ -35,44 +35,50 @@ def _run(bars, target=0.01):
 
 
 class TestBracketBarByBar(unittest.TestCase):
+    UP, DN = 100 * (1 + D), 100 * (1 - D)
+
     def test_no_fill_is_no_trade(self):
         self.assertEqual(_run([_bar(100.1, 100.2, 99.8)] * 5), (None, None))
 
     def test_long_reaches_target(self):
         side, net = _run([_bar(100.35, 100.4, 99.95), _bar(100.8, 101.0, 100.3)])
         self.assertEqual(side, 1)
-        self.assertAlmostEqual(net, 101.0 / (100 * (1 + D)) - 1 - COST)
+        self.assertAlmostEqual(net, 101.0 / self.UP - 1 - COST)
 
     def test_short_reaches_target(self):
         side, net = _run([_bar(99.65, 100.05, 99.6), _bar(99.2, 99.7, 99.0)])
         self.assertEqual(side, -1)
-        self.assertAlmostEqual(net, 1 - 99.0 / (100 * (1 - D)) - COST)
+        self.assertAlmostEqual(net, 1 - 99.0 / self.DN - COST)
 
-    def test_later_bar_touching_stop_and_target_is_a_loss(self):
-        side, net = _run([_bar(100.35, 100.4, 100.0), _bar(100.5, 101.2, 99.9)])
+    def test_stop_is_the_other_order(self):
+        side, net = _run([_bar(100.35, 100.4, 100.0), _bar(99.8, 100.3, 99.65)])
         self.assertEqual(side, 1)
-        self.assertAlmostEqual(net, 100.0 / (100 * (1 + D)) - 1 - COST)
+        self.assertAlmostEqual(net, self.DN / self.UP - 1 - COST)
 
-    def test_fill_bar_closing_back_through_the_price_is_a_loss(self):
-        side, net = _run([_bar(99.95, 100.4, 99.9)])
+    def test_a_return_to_the_price_is_not_a_stop(self):
+        side, net = _run([_bar(99.95, 100.4, 99.9), _bar(99.8, 99.9, 99.75)])
         self.assertEqual(side, 1)
-        self.assertLess(net, -D)
+        self.assertAlmostEqual(net, 99.8 / self.UP - 1 - COST)
 
-    def test_fill_bar_that_dipped_before_breaking_out_is_not_stopped(self):
-        """A fill bar opens at the price, so its low is usually just under it."""
-        side, net = _run([_bar(100.38, 100.4, 99.98), _bar(100.9, 101.05, 100.5)])
+    def test_later_bar_touching_stop_and_target_is_the_stop(self):
+        side, net = _run([_bar(100.35, 100.4, 100.0), _bar(100.5, 101.2, 99.6)])
         self.assertEqual(side, 1)
-        self.assertGreater(net, 0)
+        self.assertAlmostEqual(net, self.DN / self.UP - 1 - COST)
 
-    def test_both_stops_in_one_bar_is_a_loss(self):
+    def test_fill_bar_reaching_the_target_wins(self):
+        side, net = _run([_bar(100.9, 101.1, 99.98)])
+        self.assertEqual(side, 1)
+        self.assertAlmostEqual(net, 101.0 / self.UP - 1 - COST)
+
+    def test_both_orders_in_one_bar_is_the_worse_loss(self):
         side, net = _run([_bar(100.0, 100.5, 99.5)])
         self.assertEqual(side, 0)
-        self.assertLess(net, -D)
+        self.assertAlmostEqual(net, 1 - self.UP / self.DN - COST)
 
     def test_open_at_the_end_exits_on_the_close(self):
         side, net = _run([_bar(100.35, 100.4, 100.0), _bar(100.6, 100.7, 100.2)])
         self.assertEqual(side, 1)
-        self.assertAlmostEqual(net, 100.6 / (100 * (1 + D)) - 1 - COST)
+        self.assertAlmostEqual(net, 100.6 / self.UP - 1 - COST)
 
 
 def _walk(n, rng, vol=0.0012, start=100.0, sub=20):
@@ -93,15 +99,15 @@ def _walk(n, rng, vol=0.0012, start=100.0, sub=20):
 def _path_truth(paths, ref=100.0, target=0.01):
     """The bracket traded on the path itself, every order at its own level."""
     up, dn = ref * (1 + D), ref * (1 - D)
-    side = fill = 0
+    side = fill = stop = 0
     for path in paths:
         for x in path[1:]:
             if side == 0:
                 if x >= up or x <= dn:
-                    side, fill = (1, up) if x >= up else (-1, dn)
+                    side, fill, stop = (1, up, dn) if x >= up else (-1, dn, up)
                 continue
-            if (side > 0 and x <= ref) or (side < 0 and x >= ref):
-                return side * (ref / fill - 1)
+            if (side > 0 and x <= stop) or (side < 0 and x >= stop):
+                return side * (stop / fill - 1)
             tp = ref * (1 + side * target)
             if (side > 0 and x >= tp) or (side < 0 and x <= tp):
                 return side * (tp / fill - 1)
@@ -111,17 +117,20 @@ def _path_truth(paths, ref=100.0, target=0.01):
 class TestNullMarket(unittest.TestCase):
     def test_bar_conventions_add_nothing_over_the_true_path(self):
         """What 1m bars hide must not turn into profit. The same brackets,
-        traded on the sub-minute path and on its bars, agree on average."""
-        rng = random.Random(7)
-        diffs = []
-        for _ in range(4000):
-            bars, paths = _walk(30, rng)
-            _, gross = L.bracket_trade(bars, 0, 30, trigger=D, target=0.01, cost=0.0)
-            truth = _path_truth(paths)
-            if gross is not None and truth is not None:
-                diffs.append(gross - truth)
-        self.assertGreater(len(diffs), 1500)
-        self.assertLessEqual(sum(diffs) / len(diffs), 1e-6)
+        traded on the sub-minute path and on its bars: the bars may only be
+        worse. Calm and breaking-out volatility both, because a stop back at
+        the price was exact when calm and +3.2 bps a trade at 0.5%/min."""
+        for vol in (0.0012, 0.005):
+            rng = random.Random(7)
+            diffs = []
+            for _ in range(3000):
+                bars, paths = _walk(30, rng, vol=vol, sub=60)
+                _, gross = L.bracket_trade(bars, 0, 30, trigger=D, target=0.01, cost=0.0)
+                truth = _path_truth(paths)
+                if gross is not None and truth is not None:
+                    diffs.append(gross - truth)
+            self.assertGreater(len(diffs), 1500)
+            self.assertLessEqual(max(diffs), 1e-12, f"bars beat the path at vol {vol}")
 
     def test_a_random_walk_is_not_profitable_at_the_booked_cost(self):
         rng = random.Random(11)

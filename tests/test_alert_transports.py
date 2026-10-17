@@ -78,6 +78,43 @@ class TestTelegramTransport(unittest.TestCase):
         self.assertEqual(client.calls, [])
 
 
+class TestTelegramCredentialsFromAFile(unittest.TestCase):
+    """The owner writes /etc/amber/alerts.env by hand, possibly on Windows."""
+
+    def _send_with_env(self, token, chat, client):
+        import os
+        from unittest import mock
+
+        from amber.alerts.telegram import send_telegram_text
+
+        with mock.patch.dict(os.environ, {"AMBER_TG_TOKEN": token, "AMBER_TG_CHAT": chat}):
+            return send_telegram_text("hi", client=client)
+
+    def test_windows_line_endings_and_quotes_are_stripped(self):
+        client = _FakeClient()
+        self.assertTrue(self._send_with_env('"123:abc"\r', " 456\r", client))
+        url, payload = client.calls[0]
+        self.assertTrue(url.endswith("/bot123:abc/sendMessage"), url)
+        self.assertEqual(payload["chat_id"], "456")
+
+    def test_a_rejected_token_is_not_retried(self):
+        client = _FakeClient(status_code=401)
+        self.assertFalse(self._send_with_env("123:abc", "456", client))
+        self.assertEqual(len(client.calls), 1)
+
+    def test_transport_errors_never_log_the_token(self):
+        from unittest import mock
+
+        class _Boom:
+            def post(self, url, json):
+                raise RuntimeError(f"connection failed for url {url}")
+
+        with mock.patch("amber.alerts.telegram.time.sleep"), \
+                self.assertLogs("amber.alerts.telegram", level=logging.WARNING) as cm:
+            self.assertFalse(self._send_with_env("123:SECRET", "456", _Boom()))
+        self.assertFalse(any("SECRET" in m for m in cm.output), cm.output)
+
+
 class TestRouterChannels(unittest.TestCase):
     def test_unknown_channel_warns_instead_of_silence(self):
         with self.assertLogs("amber.alerts.router", level=logging.WARNING) as captured:

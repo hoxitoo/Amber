@@ -65,10 +65,9 @@ DEFAULT_COST = 0.0009
 # Round trip for the ignition bracket (`bracket_trade`), which enters on a stop
 # order and usually exits on one: both sides pay the taker fee (Bybit's base
 # tier is 0.055% a side, 11 bps) and stop fills slip past their level. On a
-# 20-step random walk, booking stops at their exact level instead of where the
-# path actually crossed was worth +2.3 bps a trade (bracket_trade matched the
-# exact-level path to 0.00 bps, so that is all the slippage there is to price
-# in); 4 bps are allowed. 15 bps, fixed 2026-10-17 before any bracket outcome.
+# random walk, booking stops at their exact level instead of where the path
+# actually crossed was worth ~2 bps a trade; 4 bps are allowed. 15 bps, fixed
+# 2026-10-17 before any bracket outcome.
 # The gross result is stored too, so another fee tier can be read off it.
 BRACKET_COST = 0.0015
 DEFAULT_LAG_BARS = 1
@@ -195,47 +194,46 @@ def bracket_trade(
 ) -> tuple[int | None, float | None]:
     """A breakout bracket for a warning that names no direction.
 
-    Fixed 2026-10-17, after the ignition channel was confirmed and before any
-    bracket outcome existed: at the reference price `ref` (close of bar
-    `start`, the ledger's entry bar) a buy-stop at `ref * (1 + trigger)` and a
-    sell-stop at `ref * (1 - trigger)`; whichever fills first cancels the
-    other. Take-profit `ref * (1 +- target)` — the move the warning is about —
-    stop-loss back at `ref`. Orders not filled by bar `end` are cancelled: no
-    trade, `(None, None)`. A filled trade still open at `end` exits on its close.
+    Fixed 2026-10-17, before any bracket outcome existed: at the reference
+    price `ref` (close of bar `start`, the ledger's entry bar) a buy-stop at
+    `ref * (1 + trigger)` and a sell-stop at `ref * (1 - trigger)`. The first
+    to fill is the trade; the other order's level becomes its stop-loss.
+    Take-profit `ref * (1 +- target)`, the move the warning is about. Orders
+    not filled by bar `end` are cancelled: no trade, `(None, None)`. A trade
+    still open at `end` exits on that bar's close.
 
-    1m bars do not say what happened first inside a bar, so every ambiguity
-    is booked against the trade: both stops inside one bar is a loss; a later
-    bar touching the stop is a loss even if it also touched the target. The
-    bar that fills is the exception — it opens next to `ref`, so its low
-    nearly always dips below `ref` before the breakout; there only a close
-    back beyond `ref` counts as stopped.
+    The stop sits at the opposite order, not back at `ref`, so 1m bars can
+    score it. With the stop at `ref`, the bar that fills opens next to the
+    stop and a dip before the breakout cannot be told from a return after
+    it; on a 60-step random walk at 0.5%/min that blind spot booked +3.2 bps
+    a trade that the true path did not earn. Here the only ambiguity is a bar
+    touching both orders, booked as the loss; a bar touching the stop and the
+    target is booked as the stop.
 
-    Returns (side, net): side +1 long, -1 short, 0 both stops in one bar.
+    Returns (side, net): side +1 long, -1 short, 0 both orders in one bar.
     """
     ref = float(candles[start].get("close", 0.0) or 0.0)
     if ref <= 0:
         return None, None
-    up_fill, dn_fill = ref * (1 + trigger), ref * (1 - trigger)
+    up, dn = ref * (1 + trigger), ref * (1 - trigger)
     side = 0
-    fill = 0.0
+    fill = stop = 0.0
     for i in range(start + 1, end + 1):
         c = candles[i]
         high = float(c.get("high", 0.0) or 0.0)
         low = float(c.get("low", 0.0) or 0.0)
-        close = float(c.get("close", 0.0) or 0.0)
         if side == 0:
-            hit_up, hit_dn = high >= up_fill, 0 < low <= dn_fill
+            hit_up, hit_dn = high >= up, 0 < low <= dn
             if hit_up and hit_dn:
-                return 0, ref / up_fill - 1.0 - cost
+                return 0, 1.0 - up / dn - cost  # the worse of the two losses
             if not (hit_up or hit_dn):
                 continue
-            side, fill = (1, up_fill) if hit_up else (-1, dn_fill)
-            stopped = close <= ref if side > 0 else close >= ref
-        else:
-            stopped = low <= ref if side > 0 else high >= ref
+            # The bar that fills did not reach the other order, so the stop
+            # cannot have been touched in it.
+            side, fill, stop = (1, up, dn) if hit_up else (-1, dn, up)
+        elif (side > 0 and 0 < low <= stop) or (side < 0 and high >= stop):
+            return side, side * (stop / fill - 1.0) - cost
         tp = ref * (1 + side * target)
-        if stopped:
-            return side, side * (ref / fill - 1.0) - cost
         if (side > 0 and high >= tp) or (side < 0 and 0 < low <= tp):
             return side, side * (tp / fill - 1.0) - cost
     if side == 0:

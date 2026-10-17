@@ -50,8 +50,11 @@ def send_telegram_text(
     Credentials come from arguments or the AMBER_TG_TOKEN / AMBER_TG_CHAT
     environment variables — never from code or config files.
     """
-    token = bot_token or os.environ.get(TOKEN_ENV)
-    chat = chat_id or os.environ.get(CHAT_ENV)
+    # Stripped: an env file written on Windows carries a trailing "\r" (and
+    # stray quotes or spaces are easy to type), which would otherwise go into
+    # the URL and fail every send with a 404 that names no cause.
+    token = (bot_token or os.environ.get(TOKEN_ENV) or "").strip().strip("\"'")
+    chat = (chat_id or os.environ.get(CHAT_ENV) or "").strip().strip("\"'")
     if not token or not chat:
         logger.warning("telegram alert skipped: %s/%s not configured", TOKEN_ENV, CHAT_ENV)
         return False
@@ -59,8 +62,13 @@ def send_telegram_text(
         if httpx is None:
             logger.error("telegram alert skipped: httpx is not installed")
             return False
-        client = httpx.Client(timeout=timeout)
+        # Closed after the send: the scanner runs for weeks, sending dozens a day.
+        with httpx.Client(timeout=timeout) as own:
+            return _post(own, token, chat, text)
+    return _post(client, token, chat, text)
 
+
+def _post(client: object, token: str, chat: str, text: str) -> bool:
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     for attempt in range(1, _RETRIES + 1):
         try:
@@ -76,7 +84,11 @@ def send_telegram_text(
                 time.sleep(min(retry_after, 10.0))
                 continue
             logger.warning("telegram send failed status=%s body=%s", resp.status_code, resp.text[:200])
+            if 400 <= resp.status_code < 500:
+                return False  # bad token or chat: retrying cannot help
         except Exception as exc:
-            logger.warning("telegram send error attempt=%s err=%s", attempt, exc)
+            # Transport errors can quote the request URL, and the URL holds the
+            # token; the journal is readable by more than root.
+            logger.warning("telegram send error attempt=%s err=%s", attempt, str(exc).replace(token, "<token>"))
             time.sleep(min(2.0 ** attempt, 10.0))
     return False

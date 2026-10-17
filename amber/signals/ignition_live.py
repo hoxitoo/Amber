@@ -63,9 +63,10 @@ MIN_COIN_CALIB_ROWS = 100
 MIN_TRAIN_DAYS = 7
 MIN_TRAIN_POSITIVES = 30
 TAIL_ROWS = _HOUR_CONTEXT + SPEC.window + 10
-# Breakout bracket traded on every shown warning (ledger.bracket_trade): stops
-# 0.3% either side of the price, target the warned-of 1% from it, stop back at
-# it. Fixed 2026-10-17, before any bracket outcome existed. 0.3% sits outside
+# Breakout bracket traded on every shown warning (ledger.bracket_trade): stop
+# orders 0.3% either side of the price; the first to fill is the trade and the
+# other's level its stop-loss; target the warned-of 1% from the price. Fixed
+# 2026-10-17, before any bracket outcome existed. 0.3% sits outside
 # what calm allows in the last 5 bars (0.1%) and inside the 30-bar calm range
 # (0.5%), so a fill means the calm has broken.
 BRACKET_TRIGGER = 0.003
@@ -417,8 +418,9 @@ def _bracket_text(rec: dict[str, Any]) -> str:
     return (
         f"\nЕсли торговать брекет (так его считает журнал): цена {fmt(price)}; "
         f"покупка-стоп {fmt(price * (1 + t))}, продажа-стоп {fmt(price * (1 - t))}; "
-        f"сработал один — второй отменить; цель {fmt(price * (1 + b))} / {fmt(price * (1 - b))}, "
-        f"стоп — обратно на {fmt(price)}; не сработал за {rec['horizon_min']} мин — отменить оба. "
+        f"сработал один — второй отменить и поставить стоп-лосс на его уровень; "
+        f"цель {fmt(price * (1 + b))} (лонг) / {fmt(price * (1 - b))} (шорт); "
+        f"не сработал за {rec['horizon_min']} мин — отменить оба. "
         "Прибыльность брекета ещё проверяется."
     )
 
@@ -629,8 +631,8 @@ def format_bracket(b: dict[str, Any]) -> list[str]:
     }
     win = f"{b['wins'] / b['filled'] * 100:.0f}%" if b["filled"] else "-"
     return [
-        f"Брекет на показанных предупреждениях (стопы ±{b['trigger'] * 100:.1f}%, цель 1%, стоп на цене "
-        f"предупреждения, издержки {b.get('cost', 0) * 100:.2f}% на круг):",
+        f"Брекет на показанных предупреждениях (стоп-ордера ±{b['trigger'] * 100:.1f}%, стоп-лосс на "
+        f"противоположном, цель 1%, издержки {b.get('cost', 0) * 100:.2f}% на круг):",
         f"оценено показанных: {b['shown_scored']} · сработал брекет: {b['filled']} · выигрышных: {win} · "
         f"эпизодов: {b['episodes']} · дней: {b['days']}",
         f"результат на сделку: среднее {bps(b['mean_net'])}, нижняя граница {bps(b['mean_net_low'])} · "
