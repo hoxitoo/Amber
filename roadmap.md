@@ -353,7 +353,7 @@ alert could be seen; and nothing stopped the dashboard or a reboot-reused PID
 from duplicating or blocking a service. All fixed with tests that fail on the
 previous code; details in `CLAUDE.md` sections 1 and 10.
 
-### Sprint 7 — warn before the move · **check built 2026-10-04, awaiting a live run**
+### Sprint 7 — warn before the move · **confirmed forward 2026-10-17; on Telegram**
 
 The owner's purpose is "calm now, P = x% of a sharp move soon, because of
 ...", not "moving now". `scripts/run_ignition_check.py` asks exactly that on
@@ -370,6 +370,16 @@ retargeting the scanner to ignition and D2 (sub-minute data).
   confirm it forward before anything is sent to Telegram.
 
 ### Backlog
+- [ ] **D12 — Pump fade (owner's idea, 2026-10-17).** After an extreme pump
+      (+30/50/100% within 24 h) short from the current level, expecting the
+      dump. The first idea here that supplies a direction. Test on history
+      before anything live: the whole perp universe including delisted coins
+      (survivorship), entries now / after the first red 4H bar / after N% off
+      the peak, stop above the peak, target half the pump, ~3-day timeout,
+      small-cap slippage, real funding, control = random shorts on the same
+      coins. Squeezes dominate the tails: judge the bounded mean, not the win
+      rate. A live version would watch the whole Bybit universe's 24 h change
+      (public tickers stream), not only the 27 collected symbols.
 - [ ] T6 cross-exchange lead/lag features · A7 feature-list relocation.
 - [ ] Universe expansion to 100–200 symbols. Measured ceilings: memory ~50
       symbols at a 48h window, CPU ~100 symbols, the latter set by D9.

@@ -566,6 +566,21 @@ episode count, and what it does and does not show.
   Measured here: peak 206 MB, ~8 s compute after a ~3.5 min first download
   (4.5 MB cache in data/history/). Bybit cross-check on the box optional.
 
+- **2026-10-17, end of session.** Pump-fade idea parked in the backlog (11 J,
+  roadmap D12). The owner asked whether simply waiting ~3 weeks makes the
+  model understand the market better. Answer given: no, by design — the
+  ignition model retrains daily on the last 30 days (`ignition.train_days`)
+  and the move model hourly on the last 72 h, so neither accumulates
+  knowledge; it adapts to the recent month. Waiting does narrow every
+  forward bound (~3x the episodes -> ~1.7x tighter, inferred) and shows
+  whether the ignition edge holds across regimes, but it will not turn the
+  bracket (gross ≈ -1 bps vs 15 bps cost) into profit. The one thing that
+  needs calendar time is D2 data (order book / sub-minute flow) — collection
+  would have to start before the wait to be testable after it. Offered; not
+  started. Widening ignition training to 60+ days is possible once feature
+  history covers it, but it changes the confirmed model (new forward test,
+  memory to measure first).
+
 ## 11. The plan to a profit test
 
 Proposed 2026-09-29. Why we have been circling: the only out-of-sample data is
@@ -648,3 +663,9 @@ thing that can say whether acting on alerts makes money.
   preview, replay on Bybit candles with exits fixed in advance and fees,
   against random level breakouts on the same coins and days. Count id gaps
   (deleted posts would bias it in his favour).
+- **J. Pump fade — backlog** (owner's idea 2026-10-17, parked by the owner):
+  after an extreme pump (+30/50/100% in 24 h) short from the current level,
+  expecting the dump; the first idea that supplies a direction. History test
+  first (roadmap D12): whole universe incl. delisted, three entries, stop
+  above the peak, half-pump target, ~3 days, real funding and small-cap
+  slippage, random-short control, judged on the bounded mean (squeezes).
