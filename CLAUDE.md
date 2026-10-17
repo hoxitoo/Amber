@@ -518,6 +518,44 @@ episode count, and what it does and does not show.
   Owner approved checking that channel's signals on candles, **last** in
   the queue (section 11 I).
 
+- **2026-10-17, shown-probability verdict `consistent`** (box, 9 days):
+  shown warnings 277, promised on average **5.3%**, a 1% move followed
+  **7.2%** (two-sided 95%: 3.4-13.2%, 127 episodes). By P band over all
+  40,945 calm bars (mean P -> what happened): 0.4 -> 0.5%, 1.4 -> 1.8%,
+  2.9 -> 2.8%, 5.1 -> 6.8%, 8.8 -> 11.5% (87 bars, 38 episodes): it ranks,
+  and runs slightly above P at the top, as wick touches should. Ignition
+  lift now 4.37, lower bound 2.19. **Open, flagged to the owner:** the report
+  listed one shown warning (01:13 UTC) in its last 5,000 records, and the
+  scanner journal showed `0 alerts, 0 shown` on every scan 09:42-12:49 UTC,
+  against ~38 shown a day before — about 14 h with one warning. Saturday may
+  explain part; a daily model whose thresholds no longer cross would explain
+  all of it. Diagnostic (alerts per day by model_run_id, artifact times)
+  asked. Also measured from journal timestamps: scans run every ~103 s, not
+  60 (`time.sleep(interval)` after a ~43 s scan), so ~40% of minutes are
+  never scored — no bias in the verdicts (warnings and their base come from
+  the same scanned bars), fewer warnings; backlog.
+
+- **2026-10-17, pullback study (section 11 H) — no variant pays.** Built
+  `amber/backtest/pullback.py`, `history.py`, `scripts/run_pullback_check.py`
+  (rules in the module docstring, fixed before real data). Validated first
+  at the real arm count and length (12 arms, 2 correlated symbols, 6.7 years
+  of 4H): zero-cost null -> no profitable arm in 6/6 seeds; pure trend ->
+  long arms profitable but `matched_by_trend` in 6/6; planted bounce ->
+  found (`beats_trend`). Per-trade look-ahead tests (flat future after entry;
+  a limit fill blind to its own close and far extreme); mutations caught (a
+  pivot "peek" was not, correctly: a pivot cannot be broken before it is
+  confirmed). Run here on the public Binance USD-M archive (Bybit's API is
+  geo-blocked from this container), BTC + ETH 2020-01..2026-09, funding
+  included: **all 12 arms `not_profitable`** at z 2.64. Best: drop/limit/long
+  +29 bps net per trade, lower bound -38, 217 episodes, control (random
+  entry in the same trend) +22; retest/confirm/long +12 vs control +18; win
+  rates 26-36% at 3:1. Point estimates of the long arms sit at their
+  control: whatever they earn is the 2020-26 bull trend (buy and hold +804%
+  BTC, +1313% ETH), not the support. Halves disagree in sign for most arms.
+  SE ~25 bps a trade, so only an edge above roughly +65 bps is excluded.
+  Measured here: peak 206 MB, ~8 s compute after a ~3.5 min first download
+  (4.5 MB cache in data/history/). Bybit cross-check on the box optional.
+
 ## 11. The plan to a profit test
 
 Proposed 2026-09-29. Why we have been circling: the only out-of-sample data is
@@ -593,6 +631,8 @@ thing that can say whether acting on alerts makes money.
   and funding; control = random entries in the same trend state with the same
   stop/target; null fixture at the real arm count first. Result the same day
   the owner runs it; forward confirmation would take months (few trades).
+  **Result 2026-10-17 (Binance archive): all 12 arms `not_profitable`;**
+  long arms match the random-entry trend control. Not re-tuned.
 - **I. External signal channel check** (approved 2026-10-17, last): collect
   t.me/ftcrypta's "long above X / short below Y" signals from the public web
   preview, replay on Bybit candles with exits fixed in advance and fees,

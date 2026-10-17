@@ -46,6 +46,7 @@ data/features/
 data/datasets/
 data/models/
 data/state/
+data/history/
 tmp/
 artifacts/
 

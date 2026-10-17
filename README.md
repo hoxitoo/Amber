@@ -154,6 +154,15 @@ in `/etc/amber/alerts.env` (root, mode 600), read by the scanner unit:
     alert — hundreds a day, of a signal that does not pay. Left off.
 - Discord: `AMBER_DISCORD_WEBHOOK` + `discord` channel.
 
+## Pullback study (4H, read-only)
+```bash
+python scripts/run_pullback_check.py                   # Bybit history (on the VPS)
+python scripts/run_pullback_check.py --source binance  # public archive, cached in data/history/
+```
+Twelve pre-registered variants of "buy the pullback to support in a trend" (and
+the mirrored short), with fees, slippage and funding, against a random entry in
+the same trend. 2026-10-17: none pays after costs (`CLAUDE.md` section 10).
+
 ## Ignition warnings
 ```bash
 python scripts/run_ignition_report.py         # forward verdicts: warning, bracket, shown probability
