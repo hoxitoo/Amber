@@ -625,6 +625,26 @@ episode count, and what it does and does not show.
   идёт с" line fired on every full window (rows sit on a 5 s grid); fixed.
   Direction check due ~2026-11-07.
 
+- **2026-10-25, 17-day readings (box).** *Ignition*: 77,300 calm bars, 204
+  moves from calm, 1,007 crossings / 502 shown, 260 alert episodes; move after
+  a warning **5.06%** vs **1.89%** for calm bars of the same coins: lift
+  **2.67**, lower bound **1.60** — still `confirmed`, but **weakening**: lift
+  5.06 (day 4) -> 4.29 (day 9) -> 2.67 (day 17). Splitting the cumulative
+  figures (approximate, per-coin bases were re-estimated): first 9 days 34
+  hits vs 7.9 expected (lift ~4.3), next 8 days 17 vs 11.1 (lift ~1.5,
+  precision 3.9%) — inferred, not a bounded verdict; the calm base itself
+  rose 1.38% -> 1.89% (a more active market). Exact weekly breakdown (own
+  per-coin base per week, family-wise bound) asked of the owner as a one-off
+  read-only command. *Bracket*: 355 fills / 191 episodes / 16 days, -17.6 bps
+  a trade, lower bound -21.2 (gross ≈ -2.6), win 23% — unchanged
+  `not_shown_profitable`. *Shown probability*: promised 5.0%, happened 6.0%
+  (95%: 3.4-9.7%, 250 episodes) -> `consistent`; bands still rank (0.4 ->
+  0.9%, 1.5 -> 2.0, 2.9 -> 3.0, 5.0 -> 6.5, 8.8 -> 10.6). *Book collector*:
+  `ok`, 17,279-17,280 of 17,280 rows per symbol over 24 h, 211 MB on disk
+  after ~8 days (≈23-26 MB/day incl. gzip, measured ratio ~2.7 vs the
+  synthetic 3.5; ~1.1 GB at 45 days). The owner had not pulled 9e6863d, so
+  the old "сбор идёт с" line still printed.
+
 ## 11. The plan to a profit test
 
 Proposed 2026-09-29. Why we have been circling: the only out-of-sample data is
