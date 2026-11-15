@@ -660,13 +660,15 @@ episode count, and what it does and does not show.
   `scripts/run_direction_check.py`; rules fixed in the docstring before any
   real data). Events: minutes whose first +-1% touch within 30 bars after
   entering on the next close is known (both sides in one bar dropped);
+  minutes with no touch are kept as label 0 since the review below;
   arms `all` (candles) and `calm` (ignition ledger `first_touch`). Seven
   features from book rows stamped up to the minute's close (obi L1 / 5 / 10
   bps, obi_5 over the minute, flow 1 / 5 min, obi_10 change over 5 min),
   each read both ways, all events and the top 20% |value|, plus a logistic
   model (first 70% fit, last 30% scored): 60 comparisons, z 3.14; accuracy's
   exact episode-clustered lower bound must clear always-the-majority-side on
-  the same events; `tradeable` above 57.5% (1% stop/target, 15 bps).
+  the same events; `tradeable` above 57.5% (1% stop/target, 15 bps) — wrong,
+  corrected in the review below.
   Validated: noise book -> no signal 3/3 seeds; a trending market with an
   always bid-heavy book (majority side 60%+) -> no signal; a leading
   imbalance -> found; a book whose information sits only in the rows after
@@ -677,7 +679,31 @@ episode count, and what it does and does not show.
   side, a both-sides bar booked as down, the closing row given to the next
   minute. Measured here at 27 symbols x 29 days (13.5M book rows, 1.08M
   events — every minute an event, so a pessimistic count): ~113 s, peak 541
-  MB (744 MB before storing events as per-symbol blocks). Holds the retrain
+  MB (744 MB before storing events as per-symbol blocks) — but the calm arm
+  of that benchmark was empty; re-measured below. Holds the retrain lock.
+
+- **2026-11-15, review of the direction check before deploy** (owner asked
+  for a bug check before pulling). Found and fixed, each with a test that
+  fails without the fix (all 6 reverts caught): (1) **the money threshold
+  was wrong**: 57.5% assumes every call reaches +-1%, but most minutes never
+  move in 30 min and a call there still pays 15 bps; the break-even is
+  0.5 + 0.075 / q, q = share of a rule's calls that reach either barrier
+  (65% at q = 0.5; impossible below q = 0.15, e.g. the ~6% of warnings).
+  Minutes with no touch are now kept as label 0 (candles: full window, no
+  touch; ledger: `first_touch` None and `move_hit` 0) — they count toward q
+  only; accuracy, base and episodes still come from the minutes that moved,
+  so the direction verdicts are unchanged by it. `tradeable` uses each
+  rule's own break-even, printed as "окуп. от". (2) `obi_5_1m` became NaN for
+  a whole minute if one row had both 5 bps bands empty (spread > 10 bps);
+  now averaged over the rows that have it. Checked and fine: torn last line
+  of today's csv (only `book_age_ms`, unused, could be cut with the right cell
+  count), symbols without a book dir skipped, candle tail covers the book
+  period + 5,000 bars, ledger `first_touch` 0 (both sides) dropped.
+  Re-measured here at 27 symbols x 29 days with both arms full (1.13M
+  minutes + 376k calm minutes, 96% of them moving in this synthetic, i.e.
+  pessimistic for the evaluation): **peak 589 MB, ~119 s**. The box ran the
+  book collector at ~4-5x this container's CPU per message, so ~5-10 min
+  there (inferred); one hourly retrain may be skipped while it holds the
   lock. Run pending on the box.
 
 ## 11. The plan to a profit test
@@ -767,7 +793,9 @@ thing that can say whether acting on alerts makes money.
   (calm bars / warnings, features from the book rows, within-coin ranks,
   exact family-wise bounds, null fixtures first) — the only route to
   direction left on public data. **Check built 2026-11-15**
-  (`scripts/run_direction_check.py`); `direction_signal` + `tradeable` ->
+  (`scripts/run_direction_check.py`; `tradeable` = lower bound above the
+  rule's own break-even 0.5 + 0.075 / q, q = share of its calls that move at
+  all); `direction_signal` + `tradeable` ->
   design a forward ledger rule on it before any money; `direction_signal`
   below 57.5% -> real but not enough alone; `no_direction` -> public book
   and flow do not call the side either, the honest end of the direction

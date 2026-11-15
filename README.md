@@ -183,8 +183,11 @@ Asks whether the book or the taker flow at a minute's close calls the side of
 the next 1% move (first touch within 30 min, entry one bar later) better than
 always calling the more frequent side: seven features read both ways, on all
 events and the strongest 20%, plus a small model fitted on the first 70% of the
-period; 60 comparisons, exact episode-clustered bounds. A direction call pays
-only above 57.5% accuracy at a 1% stop and target with 15 bps of costs.
+period; 60 comparisons, exact episode-clustered bounds. Whether a call could
+pay is an estimate per rule: at a 1% stop and target with 15 bps of costs it
+needs accuracy above 0.5 + 0.075 / q, where q is the share of its calls that
+reach either barrier at all (57.5% if every call moves, 65% if half do; the
+report prints it as "окуп. от").
 
 ## Ignition warnings
 ```bash

@@ -1,4 +1,4 @@
-# Project Amber — Context Snapshot (July 20, 2026; scope updated October 17)
+# Project Amber — Context Snapshot (July 20, 2026; scope updated November 15)
 
 > Sections 2–5 are the July snapshot. What has been measured since, and the
 > current plan, are in `CLAUDE.md` sections 10–11.
@@ -10,6 +10,9 @@ Amber is a real-time ML scanner for Bybit futures. It provides:
 - ignition warnings: a calm coin, P of a 1% move within 30 min (since
   2026-10-09; confirmed forward 2026-10-17, sent to Telegram),
 - forward ledgers that score every alert and warning after its horizon,
+- an order book + sub-minute taker-flow collector (since 2026-10-17, service
+  `amber-book-collector`) and a read-only check of whether that data calls
+  the side of the next move (`scripts/run_direction_check.py`, 2026-11-15),
 - filtering/scoring, alerting and monitoring,
 - but **no trade execution**, and no direction call.
 

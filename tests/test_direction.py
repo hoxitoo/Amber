@@ -87,8 +87,9 @@ def _write_market(root: Path, *, mode: str, seed: int, symbols: int = 10, days: 
         (bdir / "2026-11-01.csv").write_text("\n".join(lines) + "\n")
         labels = D.candle_labels(candles)
         for ts, lab in labels.items():
-            if (ts // D.MINUTE) % 7 == 0:
-                ledger.append({"status": "ok", "symbol": sym, "event_ts": ts, "first_touch": lab})
+            if (ts // D.MINUTE) % 7 == 0:  # as the ignition ledger writes it: None = no move
+                ledger.append({"status": "ok", "symbol": sym, "event_ts": ts, "move_hit": int(lab != 0),
+                               "first_touch": lab or None})
     (logs / "ignition_ledger.jsonl").write_text("".join(json.dumps(r) + "\n" for r in ledger))
 
 
@@ -113,6 +114,22 @@ class TestLabels(unittest.TestCase):
         # a +1% wick on the entry bar itself is before entry and does not count
         rows = [flat, (102, 100, 100, False), (100.1, 98.9, 100, False)] + [flat] * 40
         self.assertEqual(D.candle_labels(self._c(rows))[T0], -1)
+
+    def test_a_full_window_without_a_touch_is_a_no_move_minute(self):
+        flat = (100, 100, 100, False)
+        near = [flat, flat] + [(100.9, 99.1, 100, False)] * 40
+        self.assertEqual(D.candle_labels(self._c(near))[T0], 0)
+
+    def test_ledger_rows_map_to_side_no_move_or_dropped(self):
+        rows = [{"status": "ok", "symbol": "A", "event_ts": 1, "move_hit": 1, "first_touch": 1},
+                {"status": "ok", "symbol": "A", "event_ts": 2, "move_hit": 1, "first_touch": -1},
+                {"status": "ok", "symbol": "A", "event_ts": 3, "move_hit": 0, "first_touch": None},
+                {"status": "ok", "symbol": "A", "event_ts": 4, "move_hit": 1, "first_touch": 0},
+                {"status": "gap", "symbol": "A", "event_ts": 5}]
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "l.jsonl"
+            path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+            self.assertEqual(D.ledger_labels(path), {"A": {1: 1, 2: -1, 3: 0}})
 
     def test_both_sides_in_one_bar_and_gaps_are_dropped(self):
         flat = (100, 100, 100, False)
@@ -140,9 +157,37 @@ class TestFeatures(unittest.TestCase):
         self.assertAlmostEqual(f[T0][4], 1.0)  # flow_1m
         self.assertAlmostEqual(f[T0 + D.MINUTE][5], 0.0)  # flow_5m: 120 buy vs 120 sell
 
+    def test_one_row_with_an_empty_5bps_band_does_not_blank_the_minute_mean(self):
+        rows = [(T0 + k * D.ROW_MS, 100, 3, 1, 0 if k == 6 else 3, 0 if k == 6 else 1, 3, 1, 1, 1)
+                for k in range(1, 13)]
+        self.assertAlmostEqual(D.minute_features(self._book(rows))[T0][3], 0.5)
+
     def test_a_minute_with_too_few_book_rows_is_not_scored(self):
         rows = [(T0 + k * D.ROW_MS, 100 if k > 4 else math.nan, 1, 1, 1, 1, 1, 1, 0, 0) for k in range(1, 13)]
         self.assertEqual(D.minute_features(self._book(rows)), {})
+
+
+class TestMoney(unittest.TestCase):
+    def test_break_even_counts_the_calls_that_never_move(self):
+        self.assertAlmostEqual(D.break_even(1.0), 0.575)
+        self.assertAlmostEqual(D.break_even(0.5), 0.65)
+        self.assertIsNone(D.break_even(0.1))  # would need over 100% accuracy
+        self.assertIsNone(D.break_even(0.0))
+
+    def test_move_share_is_over_all_called_minutes(self):
+        y = np.array([1] * 30 + [-1] * 30 + [0] * 40)
+        x = np.where(y == 0, 1.0, y.astype(float))
+        r = D._evaluate(x, y, T0 + np.arange(100) * 31 * D.MINUTE, 2.0)
+        self.assertEqual((r["called"], r["events"]), (100, 60))
+        self.assertAlmostEqual(r["move_share"], 0.6)
+        self.assertAlmostEqual(r["accuracy"], 1.0)
+        self.assertAlmostEqual(r["break_even"], 0.625)
+
+    def test_a_signal_whose_calls_mostly_never_move_is_not_tradeable(self):
+        row = {"verdict": "direction_signal", "low": 0.60, "base": 0.52}
+        self.assertFalse(D._tradeable({**row, "break_even": D.break_even(0.5)}))  # needs 65%
+        self.assertTrue(D._tradeable({**row, "break_even": D.break_even(1.0)}))  # needs 57.5%
+        self.assertFalse(D._tradeable({**row, "break_even": None}))
 
 
 class TestKnownAnswers(unittest.TestCase):
@@ -172,6 +217,7 @@ class TestKnownAnswers(unittest.TestCase):
         often for every feature, and no feature is better than saying 'up'."""
         r = _run("skewed", 3, symbols=6, days=3)
         self.assertGreater(r["arms"]["all"]["up_share"], 0.6)
+        self.assertGreater(r["arms"]["all"]["minutes"], r["arms"]["all"]["events"])  # no-move minutes kept
         self.assertNotEqual(r["verdict"], "direction_signal", r["signals"])
 
     def test_report_prints(self):

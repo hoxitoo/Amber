@@ -10,16 +10,18 @@ next 1% move.
 
 Everything below was fixed on 2026-11-15, before the check saw real data.
 
-Events. A minute t of a symbol is an event when, entering on the close of
-minute t+1 (one bar for the human, as everywhere), the candle wicks touch
-+1% or -1% within the next 30 minutes. The label is the side touched first;
-a minute whose first touch hits both sides in one bar is dropped (order
-unknown), as are windows with a missing or gap-filled candle.
+Events. Every minute t of a symbol with a full candle window: enter on the
+close of minute t+1 (one bar for the human, as everywhere) and watch the
+candle wicks for 30 minutes. The label is the side of +-1% touched first, or
+0 when neither is touched; a minute whose first touch hits both sides in one
+bar is dropped (order unknown), as are windows with a missing or gap-filled
+candle. Direction accuracy is measured on the minutes that moved; the share
+that moved is kept, because it decides whether a call can pay (Money).
 
 Two populations (`arm`):
 - `all`: every such minute: the general direction question.
 - `calm`: calm minutes the ignition ledger scored (the warning population),
-  their first touch taken from the ledger itself.
+  their outcome taken from the ledger itself.
 
 Features at the close of minute t, from book rows with time <= that close
 (a row is stamped with the end of its 5 s interval), each oriented so that a
@@ -42,9 +44,16 @@ the more frequent side on the same events (rule 2: the winner's lower bound
 must clear the loser's achieved value). Events within 30 minutes of each
 other, on any symbol, are one episode.
 
-Money. With stop and target both 1% and 15 bps of costs, a direction call
-pays only above 57.5% accuracy; a signal whose lower bound clears that is
-marked `tradeable`.
+Money (an estimate, not a verdict). A call is a trade with stop and target
+both 1% and 15 bps of costs. Of the minutes a rule calls, only a share q
+reaches either barrier; the rest time out near zero and still pay the cost.
+So a call pays only if q x (2p - 1) x 1% > 0.15%, i.e. accuracy p above
+0.5 + 0.075 / q: 57.5% when every call moves, 65% at q = 0.5, never below
+q = 0.15 (the ~6% of warnings that move included). A signal whose lower bound clears that is
+marked `tradeable`; a forward ledger rule would still have to confirm it.
+(Corrected 2026-11-15 before the first real run: the first version assumed
+q = 1 and would have called 57.5% tradeable for a rule whose calls mostly
+never move.)
 """
 
 from __future__ import annotations
@@ -74,7 +83,7 @@ TOP_SHARE = 0.20
 FIT_SHARE = 0.70
 MIN_EPISODES = 30
 COST = 0.0015
-BREAK_EVEN = 0.5 + COST / (2 * BARRIER)  # 57.5%
+BREAK_EVEN = 0.5 + COST / (2 * BARRIER)  # 57.5% if every call reached a barrier
 N_COMPARISONS = len(ARMS) * len(CUTS) * (2 * len(FEATURES) + 1)
 
 _COLS = ("ts", "mid", "bid1_usd", "ask1_usd", "bid5_usd", "ask5_usd", "bid10_usd", "ask10_usd",
@@ -133,8 +142,13 @@ def minute_features(book: dict[str, np.ndarray]) -> dict[int, np.ndarray]:
     buy_m = np.add.reduceat(buy, start)
     sell_m = np.add.reduceat(sell, start)
     last = end - 1
-    o5 = np.where(has_book, obi_5, 0.0)
-    o5_mean = np.add.reduceat(o5, start) / np.maximum(rows_ok, 1)
+    # An empty 5 bps band on both sides (a spread wider than 10 bps) has no
+    # imbalance; average over the rows that have one, so one such row does
+    # not blank the whole minute.
+    o5_ok = has_book & np.isfinite(obi_5)
+    o5_n = np.add.reduceat(o5_ok.astype(np.int64), start)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        o5_mean = np.where(o5_n > 0, np.add.reduceat(np.where(o5_ok, obi_5, 0.0), start) / o5_n, np.nan)
 
     # 5-minute flow and obi_10 change need the minutes before; minutes are
     # contiguous only where data is, so look them up by key.
@@ -165,7 +179,7 @@ def minute_features(book: dict[str, np.ndarray]) -> dict[int, np.ndarray]:
 
 
 def candle_labels(candles: list[dict[str, Any]], start_ms: int = 0) -> dict[int, int]:
-    """First touch (+1 / -1) of +-1% after entering on the close of bar t+1."""
+    """First touch (+1 / -1) of +-1% after entering on the close of bar t+1; 0 if none."""
     if not candles:
         return {}
     ts = np.array([int(c.get("ts", 0) or 0) for c in candles], dtype=np.int64)
@@ -193,11 +207,13 @@ def candle_labels(candles: list[dict[str, Any]], start_ms: int = 0) -> dict[int,
         d = (lo[k:k + m] <= dn_lvl) & (lo[k:k + m] > 0) & (first_dn < 0)
         first_up[u] = k
         first_dn[d] = k
-    for i in np.nonzero(ok_run & (entry > 0) & ((first_up > 0) | (first_dn > 0)))[0]:
+    for i in np.nonzero(ok_run & (entry > 0))[0]:
         if ts[i] < start_ms:
             continue
         fu, fd = first_up[i], first_dn[i]
-        if fu > 0 and (fd < 0 or fu < fd):
+        if fu < 0 and fd < 0:
+            out[int(ts[i])] = 0  # no move: a call here times out and pays the cost
+        elif fu > 0 and (fd < 0 or fu < fd):
             out[int(ts[i])] = 1
         elif fd > 0 and (fu < 0 or fd < fu):
             out[int(ts[i])] = -1
@@ -206,7 +222,7 @@ def candle_labels(candles: list[dict[str, Any]], start_ms: int = 0) -> dict[int,
 
 
 def ledger_labels(ledger_path: Path, start_ms: int = 0) -> dict[str, dict[int, int]]:
-    """Calm minutes from the ignition ledger whose first touch is known."""
+    """Calm minutes from the ignition ledger: first touch +1 / -1, or 0 for no move."""
     out: dict[str, dict[int, int]] = {}
     if not Path(ledger_path).exists():
         return out
@@ -216,28 +232,48 @@ def ledger_labels(ledger_path: Path, start_ms: int = 0) -> dict[str, dict[int, i
                 r = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            ft = r.get("first_touch")
-            if r.get("status") != "ok" or ft not in (1, -1):
+            if r.get("status") != "ok":
                 continue
+            ft = r.get("first_touch")
+            if ft in (1, -1):
+                lab = int(ft)
+            elif ft is None and not int(r.get("move_hit", 0) or 0):
+                lab = 0
+            else:
+                continue  # both sides in one bar: order unknown
             ts = int(r.get("event_ts", 0) or 0)
             if ts >= start_ms:
-                out.setdefault(str(r["symbol"]), {})[ts] = int(ft)
+                out.setdefault(str(r["symbol"]), {})[ts] = lab
     return out
 
 
+def break_even(q: float) -> float | None:
+    """Accuracy a call needs to pay when a share q of calls reaches a barrier."""
+    if q <= 0:
+        return None
+    p = 0.5 + COST / (2 * q * BARRIER)
+    return p if p < 1 else None
+
+
 def _evaluate(x: np.ndarray, y: np.ndarray, ts: np.ndarray, z: float) -> dict[str, Any]:
-    """Accuracy of sign(x) as a call on y, against always calling y's majority."""
+    """Accuracy of sign(x) as a call on the minutes that moved (y = +-1),
+    against always calling their majority side; q = the share of called
+    minutes that moved at all (y = 0 is no move)."""
     from amber.backtest.label_sweep import _episodes, clustered_low
 
     keep = np.isfinite(x) & (x != 0)
-    x, y, ts = x[keep], y[keep], ts[keep]
+    called = int(keep.sum())
+    moved = keep & (y != 0)
+    x, y, ts = x[moved], y[moved], ts[moved]
+    q = (y.size / called) if called else 0.0
     if y.size == 0:
-        return {"events": 0, "episodes": 0, "accuracy": None, "base": None, "low": None}
+        return {"called": called, "events": 0, "episodes": 0, "accuracy": None, "base": None, "low": None,
+                "move_share": q, "break_even": break_even(q)}
     acc = float(np.mean(np.sign(x) == y))
     base = float(max(np.mean(y == 1), np.mean(y == -1)))
     eps = _episodes([int(t) for t in ts], HORIZON)
-    return {"events": int(y.size), "episodes": eps, "accuracy": acc, "base": base,
-            "low": clustered_low(acc, eps, z) if eps else None}
+    return {"called": called, "events": int(y.size), "episodes": eps, "accuracy": acc, "base": base,
+            "low": clustered_low(acc, eps, z) if eps else None, "move_share": q, "break_even": break_even(q)}
 
 
 def _top(x: np.ndarray, share: float = TOP_SHARE) -> np.ndarray:
@@ -271,8 +307,9 @@ def evaluate_arm(x: np.ndarray, y: np.ndarray, ts: np.ndarray, *, z: float) -> l
                 out.append({"rule": f"{'+' if sign > 0 else '-'}{name}", "cut": cut, **r})
     # The model: fitted on the first 70% of the period, judged on the rest.
     split = np.quantile(ts, FIT_SHARE) if ts.size else 0
-    fit, test = ts < split, ts >= split
-    res = {"events": 0, "episodes": 0, "accuracy": None, "base": None, "low": None}
+    fit, test = (ts < split) & (y != 0), ts >= split  # it learns the side from minutes that moved
+    res = {"called": 0, "events": 0, "episodes": 0, "accuracy": None, "base": None, "low": None,
+           "move_share": 0.0, "break_even": None}
     model_rows = []
     if fit.sum() >= 50 and len(set(y[fit].tolist())) == 2 and test.any():
         coef, icpt, norm = _fit_logistic(x[fit], y[fit])
@@ -285,6 +322,12 @@ def evaluate_arm(x: np.ndarray, y: np.ndarray, ts: np.ndarray, *, z: float) -> l
     else:
         model_rows = [{"rule": "model", "cut": c, **res} for c in CUTS]
     return out + model_rows
+
+
+def _tradeable(row: dict[str, Any]) -> bool:
+    """A direction signal whose lower bound clears its own break-even (Money)."""
+    be = row.get("break_even")
+    return bool(row.get("verdict") == "direction_signal" and be is not None and row["low"] > be)
 
 
 def _verdict(row: dict[str, Any]) -> str:
@@ -332,7 +375,7 @@ def run_direction_check(raw_root: Path, logs_root: Path, symbols: list[str]) -> 
                               "period": (min(span), max(span)) if span else None}
     for arm in ARMS:
         if not ys[arm]:
-            report["arms"][arm] = {"events": 0, "rows": []}
+            report["arms"][arm] = {"minutes": 0, "events": 0, "rows": []}
             continue
         x = np.vstack(xs[arm])
         y = np.concatenate(ys[arm]).astype(np.int64)
@@ -340,8 +383,11 @@ def run_direction_check(raw_root: Path, logs_root: Path, symbols: list[str]) -> 
         rows = evaluate_arm(x, y, ts, z=z)
         for r in rows:
             r["verdict"] = _verdict(r)
-            r["tradeable"] = bool(r["verdict"] == "direction_signal" and r["low"] > BREAK_EVEN)
-        report["arms"][arm] = {"events": int(y.size), "up_share": float(np.mean(y == 1)), "rows": rows}
+            r["tradeable"] = _tradeable(r)
+        moved = y != 0
+        report["arms"][arm] = {"minutes": int(y.size), "events": int(moved.sum()),
+                               "move_share": float(moved.mean()),
+                               "up_share": float(np.mean(y[moved] == 1)) if moved.any() else 0.0, "rows": rows}
     found = [f"{arm}:{r['cut']}:{r['rule']}" for arm in ARMS for r in report["arms"][arm].get("rows", [])
              if r["verdict"] == "direction_signal"]
     powered = any(r["verdict"] != "underpowered" for arm in ARMS for r in report["arms"][arm].get("rows", []))
@@ -361,25 +407,28 @@ def format_report(r: dict[str, Any]) -> str:
     lines = ["Направление по стакану и потоку сделок (D2): какой барьер ±1% коснётся первым за 30 мин"]
     if r.get("period"):
         a, b = (datetime.fromtimestamp(v / 1000, tz=timezone.utc).strftime("%m-%d") for v in r["period"])
-        lines.append(f"данные стакана: {a} — {b} · сравнений {r['comparisons']} (z={r['z']:.2f}) · "
-                     f"окупается от {r['break_even'] * 100:.1f}% точности")
+        lines.append(f"данные стакана: {a} — {b} · сравнений {r['comparisons']} (z={r['z']:.2f})")
     for arm in ARMS:
         a = r["arms"][arm]
         name = {"all": "все минуты перед ходом", "calm": "спокойные минуты (как у предупреждений)"}[arm]
         if not a.get("events"):
-            lines.append(f"\n{name}: событий нет")
+            lines.append(f"\n{name}: " + (f"минут {a['minutes']}, ни одного хода ±1%" if a.get("minutes")
+                                           else "событий нет"))
             continue
-        lines.append(f"\n{name}: событий {a['events']}, вверх {a['up_share'] * 100:.0f}%")
+        lines.append(f"\n{name}: минут {a['minutes']}, из них с ходом {a['events']} "
+                     f"({a['move_share'] * 100:.0f}%), вверх {a['up_share'] * 100:.0f}%")
         rows = sorted(a["rows"], key=lambda x: -(x["low"] or -1))
-        lines.append(f"  {'правило':<14}{'срез':<7}{'событий':>8}{'эпиз.':>7}{'точность':>10}{'ниж.гр.':>9}"
-                     f"{'база':>8}  итог")
+        lines.append(f"  {'правило':<14}{'срез':<7}{'ходов':>8}{'эпиз.':>7}{'точность':>10}{'ниж.гр.':>9}"
+                     f"{'база':>8}{'окуп. от':>10}  итог")
         for x in rows[:6]:
+            be = "никогда" if x.get("break_even") is None else pct(x["break_even"])
             lines.append(f"  {x['rule']:<14}{x['cut']:<7}{x['events']:>8}{x['episodes']:>7}"
-                         f"{pct(x['accuracy']):>10}{pct(x['low']):>9}{pct(x['base']):>8}  {x['verdict']}")
+                         f"{pct(x['accuracy']):>10}{pct(x['low']):>9}{pct(x['base']):>8}{be:>10}  {x['verdict']}")
     lines.append("")
     if r["verdict"] == "direction_signal":
         lines.append("ИТОГ: direction_signal — направление видно: " + ", ".join(r["signals"]))
-        lines.append("  окупается после издержек: " + (", ".join(r["tradeable"]) or "нет (точность ниже 57.5%)"))
+        lines.append("  окупается после издержек (оценка): " + (", ".join(r["tradeable"]) or
+                     "нет — точность ниже порога, который задают издержки и доля минут без хода"))
     elif r["verdict"] == "no_direction":
         lines.append("ИТОГ: no_direction — ни стакан, ни поток не говорят, куда пойдёт ход")
     else:
