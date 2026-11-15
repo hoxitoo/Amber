@@ -645,6 +645,41 @@ episode count, and what it does and does not show.
   synthetic 3.5; ~1.1 GB at 45 days). The owner had not pulled 9e6863d, so
   the old "сбор идёт с" line still printed.
 
+- **2026-11-15, weekly ignition breakdown (box)** — own per-coin base per week,
+  one-sided bounds at z 2.39 over 6 blocks (lift / lower bound / episodes):
+  wk1 4.02 / 1.41 / 131, wk2 2.31 / 0.54 / 97, wk3 1.89 / 0.44 / 119, wk4
+  3.28 / 1.10 / 100, wk5 4.74 / 1.58 / 94, wk6 (3 days) 0.0 / 0.0 / 23 — 0
+  hits in 54 warnings against a 4.02% base (≈2.2 expected, P(0) ≈ 0.11),
+  underpowered, in a market whose calm base doubled. Reading: the 10-25 dip
+  was weeks 2-3; weeks 4-5 came back to 3-5x. Every full week is above 1 at
+  the point; the effect is noisy week to week, not fading. Pooled from the
+  printed rounded figures ≈ 118 hits vs ≈ 40 expected, lift ≈ 2.9
+  (inferred).
+
+- **2026-11-15, D2 direction check built** (`amber/backtest/direction.py`,
+  `scripts/run_direction_check.py`; rules fixed in the docstring before any
+  real data). Events: minutes whose first +-1% touch within 30 bars after
+  entering on the next close is known (both sides in one bar dropped);
+  arms `all` (candles) and `calm` (ignition ledger `first_touch`). Seven
+  features from book rows stamped up to the minute's close (obi L1 / 5 / 10
+  bps, obi_5 over the minute, flow 1 / 5 min, obi_10 change over 5 min),
+  each read both ways, all events and the top 20% |value|, plus a logistic
+  model (first 70% fit, last 30% scored): 60 comparisons, z 3.14; accuracy's
+  exact episode-clustered lower bound must clear always-the-majority-side on
+  the same events; `tradeable` above 57.5% (1% stop/target, 15 bps).
+  Validated: noise book -> no signal 3/3 seeds; a trending market with an
+  always bid-heavy book (majority side 60%+) -> no signal; a leading
+  imbalance -> found; a book whose information sits only in the rows after
+  the close -> no signal, while the same features one minute late find it
+  (the first version of that trap was too weak to find anything even when
+  peeking; strengthened before trusting it). Mutations caught: features one
+  minute late, no entry lag, comparing against 50% instead of the majority
+  side, a both-sides bar booked as down, the closing row given to the next
+  minute. Measured here at 27 symbols x 29 days (13.5M book rows, 1.08M
+  events — every minute an event, so a pessimistic count): ~113 s, peak 541
+  MB (744 MB before storing events as per-symbol blocks). Holds the retrain
+  lock. Run pending on the box.
+
 ## 11. The plan to a profit test
 
 Proposed 2026-09-29. Why we have been circling: the only out-of-sample data is
@@ -731,7 +766,12 @@ thing that can say whether acting on alerts makes money.
   (above). After ~3 weeks: a direction check built like the ignition check
   (calm bars / warnings, features from the book rows, within-coin ranks,
   exact family-wise bounds, null fixtures first) — the only route to
-  direction left on public data.
+  direction left on public data. **Check built 2026-11-15**
+  (`scripts/run_direction_check.py`); `direction_signal` + `tradeable` ->
+  design a forward ledger rule on it before any money; `direction_signal`
+  below 57.5% -> real but not enough alone; `no_direction` -> public book
+  and flow do not call the side either, the honest end of the direction
+  search on public data.
 - **J. Pump fade — backlog** (owner's idea 2026-10-17, parked by the owner):
   after an extreme pump (+30/50/100% in 24 h) short from the current level,
   expecting the dump; the first idea that supplies a direction. History test

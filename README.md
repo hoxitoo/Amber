@@ -175,6 +175,17 @@ size, resting notional within 5-100 bps per side, buy/sell flow) in
 Collected so the direction question can be asked of data the 1m bars do not
 have. Off with `book.enabled: false`.
 
+## Direction check on the order book (roadmap D2, read-only)
+```bash
+python scripts/run_direction_check.py
+```
+Asks whether the book or the taker flow at a minute's close calls the side of
+the next 1% move (first touch within 30 min, entry one bar later) better than
+always calling the more frequent side: seven features read both ways, on all
+events and the strongest 20%, plus a small model fitted on the first 70% of the
+period; 60 comparisons, exact episode-clustered bounds. A direction call pays
+only above 57.5% accuracy at a 1% stop and target with 15 bps of costs.
+
 ## Ignition warnings
 ```bash
 python scripts/run_ignition_report.py         # forward verdicts: warning, bracket, shown probability
