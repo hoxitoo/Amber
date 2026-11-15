@@ -187,7 +187,8 @@ period; 60 comparisons, exact episode-clustered bounds. Whether a call could
 pay is an estimate per rule: at a 1% stop and target with 15 bps of costs it
 needs accuracy above 0.5 + 0.075 / q, where q is the share of its calls that
 reach either barrier at all (57.5% if every call moves, 65% if half do; the
-report prints it as "окуп. от").
+report prints it as "окуп. от"). 2026-11-15 on 29 days of book data:
+`no_direction` (`CLAUDE.md` section 10).
 
 ## Ignition warnings
 ```bash

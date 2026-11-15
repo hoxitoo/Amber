@@ -158,8 +158,9 @@ fences render as plain grey text.
   All read-only. The ledger report is the one that answers "does it pay".
 - As of 2026-10 the move model is indistinguishable from one-feature rules
   (`range_atr_14`, `bb_width_20`) in the baseline check AND in the forward
-  ledger (move hit 87.0% vs 87.4%); no fixed direction rule beats the fee
-  (section 10). Everything available on 1m
+  ledger (move hit 87.0% vs 87.4%); no fixed direction rule beats the fee,
+  and the order book / taker flow does not call the side either
+  (2026-11-15, section 10). Everything available on 1m
   bars says "a move is already under way"; see roadmap D2/D11.
 - `docs/target_review_2026-09.md` holds the reasoning behind the current target.
 
@@ -704,7 +705,33 @@ episode count, and what it does and does not show.
   pessimistic for the evaluation): **peak 589 MB, ~119 s**. The box ran the
   book collector at ~4-5x this container's CPU per message, so ~5-10 min
   there (inferred); one hourly retrain may be skipped while it holds the
-  lock. Run pending on the box.
+  lock. Pushed as d309f41.
+
+- **2026-11-15, D2 direction check on the box: `no_direction`** (book data
+  10-17..11-15, 60 comparisons, z 3.14; pre-registered outcome of plan K).
+  *All minutes*: 1,117,940 minutes, 271,127 with a +-1% touch within 30 min
+  (24%), 48% up. Best rows (accuracy / lower bound / majority-side base,
+  episodes): model top20 56.6 / 48.4 / 57.1 (385, test segment only);
+  +obi_5_1m top20 52.1 / 47.7 / 52.1 (1,296); +flow_5m top20 51.9 / 47.3 /
+  53.6 (1,192); +obi_5_1m all 51.4 / 47.1 / 52.1 (1,340); +obi_10 all 50.9 /
+  46.6 / 52.1. Every point estimate sits at or below its base: nothing calls
+  the side better than always calling the more frequent one. At ~1,300
+  episodes the bound is ~4.3 pp below the point, so the simple rules' true
+  accuracy is below ~56% (inferred from the symmetric width) — short of the
+  57.5% a call would need even if every call moved; the printed break-even
+  at their real q (0.24-0.35) is 72-82%. *Calm minutes* (ignition-ledger
+  population): 104,106 minutes, 2,371 moves (2%), 40% up; best +obi_5_1m
+  top20 60.1 / 46.2 / 64.0 (135 episodes), model top20 69.5 / 44.5 / 69.5
+  (43): bounds wide, and break-even "никогда" for every row — at q ≈ 2% no
+  accuracy pays 15 bps. The 60% down share of calm moves is one month's base
+  rate, not a rule fixed in advance; not acted on. Reading: the public book
+  (as far as 200 levels reach) and taker flow at a minute's close do not
+  call the side of the next 1% move. With the move ledger's momentum/fade,
+  the bracket (gross ≈ -1 bps) and the pullback study, every direction route
+  on public data tested so far is negative. Not tested: anything sub-second
+  (the 5 s rows cannot answer it), other horizons, other regimes. Not
+  re-sliced on these data (a new rule would be a new forward test). Next is
+  the owner's choice (11 K).
 
 ## 11. The plan to a profit test
 
@@ -797,9 +824,16 @@ thing that can say whether acting on alerts makes money.
   rule's own break-even 0.5 + 0.075 / q, q = share of its calls that move at
   all); `direction_signal` + `tradeable` ->
   design a forward ledger rule on it before any money; `direction_signal`
-  below 57.5% -> real but not enough alone; `no_direction` -> public book
+  not `tradeable` -> real but not enough alone; `no_direction` -> public book
   and flow do not call the side either, the honest end of the direction
-  search on public data.
+  search on public data. **Result 2026-11-15: `no_direction`** (all
+  minutes: every feature at or below the majority-side base, ~1,300
+  episodes; calm minutes: break-even unreachable at q ≈ 2%). Open, the
+  owner's choice: ignition as an information-only channel (the human picks
+  the side); the pump-fade history test (J, the one untested idea whose
+  direction comes from another mechanism); the channel check (I); whether
+  to keep `amber-book-collector` running (its 5 s rows cannot answer a
+  sub-second question).
 - **J. Pump fade — backlog** (owner's idea 2026-10-17, parked by the owner):
   after an extreme pump (+30/50/100% in 24 h) short from the current level,
   expecting the dump; the first idea that supplies a direction. History test

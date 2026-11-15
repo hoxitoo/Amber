@@ -267,10 +267,11 @@ a known inaccuracy or dead end, not a feature wish.
       (importance ran on the pump head until 3ff3415). Re-run with the 72h
       window (efdf724) once liquidation history on the box covers it.
 
-- [~] **D2 — "Early stage" is unreachable on 1m bars.** *2026-10-17: order book + sub-minute flow
-      collection built (`amber-book-collector`); direction check after ~3 weeks of data.
-      2026-11-15: check built (`scripts/run_direction_check.py`, `amber/backtest/direction.py`),
-      reviewed; run pending on the box.*
+- [x] **D2 — "Early stage" is unreachable on 1m bars. `EVALUATED 2026-11-15 — NO DIRECTION`**
+      *2026-10-17: order book + sub-minute flow collection built (`amber-book-collector`).
+      2026-11-15: `scripts/run_direction_check.py` on 29 days of book data: no book or
+      flow feature, and no model on them, calls the side of the next 1% move better than
+      always calling the more frequent side (~1,300 episodes; `CLAUDE.md` section 10).*
       By the time a 1-minute candle closes and `range_atr_14` registers a spike,
       the move is a minute old — mid-move, not early, on a venue where bots act
       in milliseconds. The three order-flow features exist but are aggregated to
